@@ -12,22 +12,21 @@ stages:
 
 workflow:
   rules:
-  - if: $CI_PIPELINE_SOURCE == "web"
-    when: always
-  - when: never
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: always
+    - when: never
 
 # Define ingescape library files
 .lib-build-files:
   rules:
     - changes:
-      - .gitlab-ci.yml
-      - src/**/*
-      - builds/cmake/**/*
-      - dependencies/yajl/**/*
-      - dependencies/unix/*
-      - dependencies/windows/unix/*
-      - CMakeLists.txt
-
+        - .gitlab-ci.yml
+        - src/**/*
+        - builds/cmake/**/*
+        - dependencies/yajl/**/*
+        - dependencies/unix/*
+        - dependencies/windows/unix/*
+        - CMakeLists.txt
 
 # Global variables. Can be used by any jobs
 variables:
@@ -72,7 +71,6 @@ lib-build-macos:
     name: "lib-build-macos"
     expire_in: 1 day
 
-
 # Create runtime installer for macos
 #On runner machine:
 #- install Packages from http://s.sudre.free.fr/Software/Packages/about.html
@@ -90,13 +88,13 @@ lib-installer-macos:
     - macos-qt6
   script:
     - make -C build package
-#    - packagesbuild ./builds/xcode/ingescape.pkgproj
-#    - mv ./builds/xcode/build/ingescape.pkg ./builds/xcode/build/ingescape_unsigned.pkg
-#    - 'productsign --sign "Developer ID Installer: Ingenuity i/o (56DRT9MG9S)" ./builds/xcode/build/ingescape_unsigned.pkg ./builds/xcode/build/ingescape.pkg'
+    #    - packagesbuild ./builds/xcode/ingescape.pkgproj
+    #    - mv ./builds/xcode/build/ingescape.pkg ./builds/xcode/build/ingescape_unsigned.pkg
+    #    - 'productsign --sign "Developer ID Installer: Ingenuity i/o (56DRT9MG9S)" ./builds/xcode/build/ingescape_unsigned.pkg ./builds/xcode/build/ingescape.pkg'
     - mkdir -p $HOME/builds/packages
-#    - cp ./builds/xcode/build/ingescape.pkg $HOME/builds/packages/
+    #    - cp ./builds/xcode/build/ingescape.pkg $HOME/builds/packages/
     - cp ./build/ingescape*.pkg $HOME/builds/packages/
-#    - mv ./build/ingescape*.pkg .
+  #    - mv ./build/ingescape*.pkg .
   artifacts:
     paths:
       - ./build
@@ -137,36 +135,8 @@ lib-windows-release-x64:
       }
   artifacts:
     paths:
-     - build
+      - build
     name: "lib-windows-release-x64"
-    expire_in: 1 day
-
-# Create ingescape library for windows 32 bits release
-lib-windows-release-x86:
-  extends: .lib-build-files
-  stage: lib-build
-  tags:
-    - windows
-  variables:
-    ARCH: "Release_x86"
-  before_script:
-    - git -c url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ingescape.com/".insteadOf="ssh://git@gitlab.ingescape.com:22222/" submodule update --init --remote --recursive
-  script:
-    - mkdir build\ReleaseX86
-    - cmake -S . -B build\ReleaseX86 -G"$env:VS_CMAKE_GENERATOR" -AWin32 -DCMAKE_BUILD_TYPE=Release -DWITH_DEPS=ON -DWITH_CSHARP_WRAPPER=ON
-    - Powershell.exe -executionpolicy remotesigned bindings/csharp/builds/cmake/FixCmakeSolution.ps1 -buildDirectory build/ReleaseX86/bindings/csharp -projectName IngescapeCSharp
-    - Powershell.exe -executionpolicy remotesigned bindings/csharp/builds/cmake/FixCmakeSolution.ps1 -buildDirectory build/ReleaseX86/bindings/csharp/test -projectName igstester
-    - cmake --build build\ReleaseX86 --target ALL_BUILD --config Release
-    - |
-      if ( ($env:CI_PROJECT_ROOT_NAMESPACE -eq "ingescape-private") -and ($env:CI_COMMIT_BRANCH -eq $env:CI_DEFAULT_BRANCH) )
-      {
-        cmake --install .\build\ReleaseX86 --config Release --prefix $env:WORKSPACE_NET_SHARE\Builds\Release\x86
-        cmake --install .\build\ReleaseX86 --config Release --prefix $env:ARTIFACTS_NET_SHARE\win32\binaries\ingescape\release
-      }
-  artifacts:
-    paths:
-     - build
-    name: "lib-windows-release-x86"
     expire_in: 1 day
 
 # Create ingescape library for windows 64 bits debug
@@ -193,68 +163,9 @@ lib-windows-debug-x64:
       }
   artifacts:
     paths:
-     - build
+      - build
     name: "lib-windows-debug-x64"
     expire_in: 1 day
-
-# Create ingescape library for windows 32 bits debug
-lib-windows-debug-x86:
-  extends: .lib-build-files
-  stage: lib-build
-  tags:
-    - windows
-  variables:
-    ARCH: "Debug_x86"
-  before_script:
-    - git -c url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ingescape.com/".insteadOf="ssh://git@gitlab.ingescape.com:22222/" submodule update --init --remote --recursive
-  script:
-    - mkdir build\DebugX86
-    - cmake -S . -B build\DebugX86 -G"$env:VS_CMAKE_GENERATOR" -AWin32 -DCMAKE_BUILD_TYPE=Debug -DWITH_DEPS=ON -DWITH_CSHARP_WRAPPER=ON
-    - Powershell.exe -executionpolicy remotesigned bindings/csharp/builds/cmake/FixCmakeSolution.ps1 -buildDirectory build/DebugX86/bindings/csharp -projectName IngescapeCSharp
-    - Powershell.exe -executionpolicy remotesigned bindings/csharp/builds/cmake/FixCmakeSolution.ps1 -buildDirectory build/DebugX86/bindings/csharp/test -projectName igstester
-    - cmake --build build\DebugX86 --target ALL_BUILD --config Debug
-    - |
-      if ( ($env:CI_PROJECT_ROOT_NAMESPACE -eq "ingescape-private") -and ($env:CI_COMMIT_BRANCH -eq $env:CI_DEFAULT_BRANCH) )
-      {
-        cmake --install .\build\DebugX86 --config Debug --prefix $env:WORKSPACE_NET_SHARE\Builds\Debug\x86
-        cmake --install .\build\DebugX86 --config Debug --prefix $env:ARTIFACTS_NET_SHARE\win32\binaries\ingescape\debug
-      }
-  artifacts:
-    paths:
-     - build
-    name: "lib-windows-debug-x86"
-    expire_in: 1 day
-
-
-# Create runtime install for windows 32 bits
-lib-installer-release-windows-x86:
-  extends: .lib-build-files
-  stage: lib-installer
-  variables:
-    ARCH: "Release_x86"
-  tags:
-    - windows
-  script:
-    - cd build\ReleaseX86
-    - cpack --config CPackConfig.cmake
-    - cd ..\..
-    - |
-      if ( ($env:CI_PROJECT_ROOT_NAMESPACE -eq "ingescape-private") -and ($env:CI_COMMIT_BRANCH -eq $env:CI_DEFAULT_BRANCH) )
-      {
-        mkdir $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\release -fo
-        cp build\ReleaseX86\ingescape-*.exe $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\release -Force
-        cp build\ReleaseX86\ingescape-*.zip $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\release -Force
-      }
-  artifacts:
-    paths:
-      - build\ReleaseX86\ingescape-*.exe
-      - build\ReleaseX86\ingescape-*.zip
-    name: "lib-installer-release-windows-x86"
-  dependencies:
-    - lib-windows-release-x86
-  needs:
-    - lib-windows-release-x86
-    - test-csharp-x86-release
 
 # Create runtime install for windows 64 bits
 lib-installer-release-windows-x64:
@@ -284,37 +195,6 @@ lib-installer-release-windows-x64:
     - lib-windows-release-x64
   needs:
     - lib-windows-release-x64
-    - test-csharp-x64-release
-
-# Create runtime install for windows 32 bits (debug)
-lib-installer-debug-windows-x86:
-  extends: .lib-build-files
-  stage: lib-installer
-  variables:
-    ARCH: "Debug_x86"
-  tags:
-    - windows
-  script:
-    - cd build\DebugX86
-    - cpack --config CPackConfig.cmake -C Debug
-    - cd ..\..
-    - |
-      if ( ($env:CI_PROJECT_ROOT_NAMESPACE -eq "ingescape-private") -and ($env:CI_COMMIT_BRANCH -eq $env:CI_DEFAULT_BRANCH) )
-      {
-        mkdir $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\debug -fo
-        cp build\DebugX86\ingescape-*.exe $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\debug -Force
-        cp build\DebugX86\ingescape-*.zip $env:ARTIFACTS_NET_SHARE\win32\packages\ingescape\debug -Force
-      }
-  artifacts:
-    paths:
-      - build\DebugX86\ingescape-*.exe
-      - build\DebugX86\ingescape-*.zip
-    name: "lib-installer-debug-windows-x86"
-  dependencies:
-    - lib-windows-debug-x86
-  needs:
-    - lib-windows-debug-x86
-    - test-csharp-x86-debug
 
 # Create runtime install for windows 64 bits (debug)
 lib-installer-debug-windows-x64:
@@ -344,7 +224,6 @@ lib-installer-debug-windows-x64:
     - lib-windows-debug-x64
   needs:
     - lib-windows-debug-x64
-    - test-csharp-x64-debug
 
 # _      _
 #| |    (_)
@@ -635,14 +514,12 @@ build-deb-packages:
   stage: delivery
   tags:
     - docker
-  image: debian:10
+  image: debian:11
   variables:
     GIT_STRATEGY: clone
   script:
     - apt-get update || apt-get update
-    - apt-get install -y build-essential file git tree rsync wget libssl-dev libcurl4-openssl-dev
-    - wget -qO- https://github.com/Kitware/CMake/releases/download/v3.22.2/cmake-3.22.2.tar.gz | tar xfz -
-    - (cd cmake-3.22.2 ; ./bootstrap && make -j6 && make install)
+    - apt-get install -y build-essential file git tree rsync wget libssl-dev libcurl4-openssl-dev cmake
     - git -c url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ingescape.com/".insteadOf="ssh://git@gitlab.ingescape.com:22222/" submodule update --init --remote --recursive
     - mkdir debian_x64
     - echo "Release build"
@@ -666,7 +543,7 @@ build-deb-packages:
     - cp debian_x64/* $ARTIFACTS_NET_SHARE/linux64/packages/ingescape
     - echo "Setting up SSH"
     - mkdir -p ~/.ssh/
-    - ssh-keyscan -t rsa ingescape.com >> ~/.ssh/known_hosts
+    - ssh-keyscan ${STABLE_DELIVERY_HOST} >> ~/.ssh/known_hosts
     - umask 077
     - echo ${STABLE_SSH_SECRET} | base64 -d > ssh_secret
     - umask 022
@@ -683,7 +560,6 @@ build-deb-packages:
   rules:
     - !reference [.root_namespace, rules]
 
-
 update-vm-runners:
   stage: delivery
   tags:
@@ -695,21 +571,20 @@ update-vm-runners:
     - apk add openssh
     - mkdir -p ~/.ssh
     - ssh-keyscan ${UBUNTU_18_04_RUNNER} >> ~/.ssh/known_hosts
-    - ssh-keyscan ${DEBIAN_11_RUNNER} >> ~/.ssh/known_hosts
+    #- ssh-keyscan ${DEBIAN_11_RUNNER} >> ~/.ssh/known_hosts
     - umask 077
     - echo ${SSH_SECRET} | base64 -d > ssh_secret
     - umask 022
     - echo "Upgrade ingescape for Ubuntu 18.04 VM runner (Circle linux build)"
     - ssh -i ssh_secret root@${UBUNTU_18_04_RUNNER} apt-get update
     - ssh -i ssh_secret root@${UBUNTU_18_04_RUNNER} apt-get install --reinstall ingescape-dev -y
-    - echo "Upgrade ingescape for Debian 11 VM runner (CCU GUIs linux build)"
-    - ssh -i ssh_secret root@${DEBIAN_11_RUNNER} apt-get update
-    - ssh -i ssh_secret root@${DEBIAN_11_RUNNER} apt-get install --reinstall ingescape-dev -y
+    #- echo "Upgrade ingescape for Debian 11 VM runner (CCU GUIs linux build)"
+    #- ssh -i ssh_secret root@${DEBIAN_11_RUNNER} apt-get update
+    #- ssh -i ssh_secret root@${DEBIAN_11_RUNNER} apt-get install --reinstall ingescape-dev -y
   dependencies: []
   needs: []
   rules:
     - !reference [.root_namespace, rules]
-
 
 #   _   _           _             _  _____
 #  | \ | |         | |           | |/ ____|
@@ -826,7 +701,6 @@ binding-node-js-windows:
   needs:
     - lib-windows-release-x64
 
-
 ## Tests
 test-node-js-macos:
   stage: binding-test
@@ -915,7 +789,6 @@ test-python:
   script:
     - cd bindings/python
     - export PLATFORM="linux"
-    - export FROM_SOURCES="true"
     - ./prepare_for_packaging.sh
     - ./tests/run_tests.sh
   artifacts:
@@ -939,10 +812,7 @@ package-python-wheels-windows:
     - git -c url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ingescape.com/".insteadOf="ssh://git@gitlab.ingescape.com:22222/" submodule update --init --remote --recursive
   script:
     - cd ./bindings/python/
-    - $Env:FROM_SOURCES = "true"
     - .\prepare_for_packaging.ps1
-    - C:\Users\admin\AppData\Local\Programs\Python\Python37\python.exe -m pip install --upgrade build
-    - C:\Users\admin\AppData\Local\Programs\Python\Python37\python.exe -m build
     - C:\Users\admin\AppData\Local\Programs\Python\Python38\python.exe -m pip install --upgrade build
     - C:\Users\admin\AppData\Local\Programs\Python\Python38\python.exe -m build
     - C:\Users\admin\AppData\Local\Programs\Python\Python39\python.exe -m pip install --upgrade build
@@ -954,7 +824,6 @@ package-python-wheels-windows:
     - C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install --upgrade build
     - C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m build
   dependencies:
-    - test-python
     - lib-windows-release-x64
   needs:
     - test-python
@@ -973,25 +842,18 @@ package-python-wheels-macos:
   script:
     - cd ./bindings/python/
     - export PLATFORM="macos"
-    - export FROM_SOURCES="true"
     - ./prepare_for_packaging.sh
-    - /usr/local/opt/python@3.8/bin/python3.8 -m pip install --upgrade build
-    - /usr/local/opt/python@3.8/bin/python3.8 -m build
-    - /usr/local/opt/python@3.9/bin/python3.9 -m pip install --upgrade build
-    - /usr/local/opt/python@3.9/bin/python3.9 -m build
-    - /usr/local/opt/python@3.10/bin/python3.10 -m pip install --upgrade build
-    - /usr/local/opt/python@3.10/bin/python3.10 -m build
-    - /usr/local/opt/python@3.11/bin/python3.11 -m pip install --upgrade build
-    - /usr/local/opt/python@3.11/bin/python3.11 -m build
-    - echo "NOTE python 3.12 needs to be run in its venv to install packages under macOS (see PEP668)"
-    - /usr/local/opt/python@3.12/bin/python3.12 -m venv .venv3.12
-    - source .venv3.12/bin/activate
-    - python3.12 -m pip install --upgrade build
-    - python3.12 -m build
-    - deactivate
-    - rm -rf .venv3.12
+    - /Library/Frameworks/Python.framework/Versions/3.8/bin/python3 -m pip install --upgrade build
+    - /Library/Frameworks/Python.framework/Versions/3.8/bin/python3 -m build
+    - /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 -m pip install --upgrade build
+    - /Library/Frameworks/Python.framework/Versions/3.9/bin/python3 -m build
+    - /Library/Frameworks/Python.framework/Versions/3.10/bin/python3 -m pip install --upgrade build
+    - /Library/Frameworks/Python.framework/Versions/3.10/bin/python3 -m build
+    - /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m pip install --upgrade build
+    - /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m build
+    - /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m pip install --upgrade build
+    - /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m build
   dependencies:
-    - test-python
     - lib-build-macos
   needs:
     - test-python
@@ -1014,7 +876,6 @@ package-python-wheels-manylinux_2_24_x86_64:
     - cd ./bindings/python/
     - mkdir -p ./dependencies/linux/
     - export PLATFORM="linux"
-    - export FROM_SOURCES="true"
     - ./prepare_for_packaging.sh
     - python3.8  -m pip install --upgrade build
     - python3.8  -m build
@@ -1025,11 +886,10 @@ package-python-wheels-manylinux_2_24_x86_64:
     - python3.11 -m pip install --upgrade build
     - python3.11 -m build
     - |
-        for whl in dist/*.whl; do
-          auditwheel repair "$whl" --plat "manylinux_2_24_x86_64" -w ./wheelhouse/
-        done
+      for whl in dist/*.whl; do
+        auditwheel repair "$whl" --plat "manylinux_2_24_x86_64" -w ./wheelhouse/
+      done
   dependencies:
-    - test-python
     - lib-build-linux-x64
   needs:
     - test-python
@@ -1037,6 +897,7 @@ package-python-wheels-manylinux_2_24_x86_64:
   artifacts:
     paths:
       - bindings/python/wheelhouse/*
+      - bindings/python/dependencies/*
 
 package-python-wheels-manylinux2014_x86_64:
   stage: binding-package
@@ -1050,10 +911,7 @@ package-python-wheels-manylinux2014_x86_64:
   script:
     - cd ./bindings/python/
     - export PLATFORM="linux"
-    - export FROM_SOURCES="true"
     - ./prepare_for_packaging.sh
-    - python3.7  -m pip install --upgrade build
-    - python3.7  -m build
     - python3.8  -m pip install --upgrade build
     - python3.8  -m build
     - python3.9  -m pip install --upgrade build
@@ -1063,11 +921,10 @@ package-python-wheels-manylinux2014_x86_64:
     - python3.11 -m pip install --upgrade build
     - python3.11 -m build
     - |
-        for whl in dist/*.whl; do
-          auditwheel repair "$whl" --plat "manylinux2014_x86_64" -w ./wheelhouse/
-        done
+      for whl in dist/*.whl; do
+        auditwheel repair "$whl" --plat "manylinux2014_x86_64" -w ./wheelhouse/
+      done
   dependencies:
-    - test-python
     - lib-build-linux-x64
   needs:
     - test-python
@@ -1089,20 +946,16 @@ package-python-wheels-manylinux2010_x86_64:
     - cd ./bindings/python/
     - mkdir -p ./dependencies/linux/
     - export PLATFORM="linux"
-    - export FROM_SOURCES="true"
     - ./prepare_for_packaging.sh
-    - python3.7 -m pip install --upgrade build
-    - python3.7 -m build
     - python3.8 -m pip install --upgrade build
     - python3.8 -m build
     - python3.9 -m pip install --upgrade build
     - python3.9 -m build
     - |
-        for whl in dist/*.whl; do
-          auditwheel repair "$whl" --plat "manylinux2010_x86_64" -w ./wheelhouse/
-        done
+      for whl in dist/*.whl; do
+        auditwheel repair "$whl" --plat "manylinux2010_x86_64" -w ./wheelhouse/
+      done
   dependencies:
-    - test-python
     - lib-build-linux-x64
   needs:
     - test-python
@@ -1124,33 +977,36 @@ publish-python-package:
     - git -c url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ingescape.com/".insteadOf="ssh://git@gitlab.ingescape.com:22222/" submodule update --init --remote --recursive
   script:
     - cd bindings/python
-    - mkdir -p ./dependencies/linux/
-    - export PLATFORM="linux"
-    - export FROM_SOURCES="true"
-    - ./prepare_for_packaging.sh
+    - export IGS_MAJOR=$(grep "#define INGESCAPE_VERSION_MAJOR" ../../include/ingescape.h | cut -d' ' -f3)
+    - export IGS_MINOR=$(grep "#define INGESCAPE_VERSION_MINOR" ../../include/ingescape.h | cut -d' ' -f3)
+    - export IGS_PATCH=$(grep "#define INGESCAPE_VERSION_PATCH" ../../include/ingescape.h | cut -d' ' -f3)
+    - echo "Prepare pyproject.toml from pyproject.toml.in"
+    - sed "s/@IGS_VERSION@/\"$IGS_MAJOR.$IGS_MINOR.$IGS_PATCH\"/" pyproject.toml.in > pyproject.toml
+    - echo "Prepare setup.py from setup.py.in"
+    - sed "s/@IGS_VERSION@/\"$IGS_MAJOR.$IGS_MINOR.$IGS_PATCH\"/" setup.py.in > setup.py
     - python3 -m pip install --upgrade twine build
     - python3 -m build --sdist
-    - python3 -m twine upload -u ${PYPI_USERNAME} -p ${PYPI_PASSWORD} dist/* wheelhouse/*
+    - |
+      if [[ $CI_PROJECT_ROOT_NAMESPACE == "ingescape-private" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH ]]
+      then
+        python3 -m twine upload -u ${PYPI_USERNAME} -p ${PYPI_PASSWORD} dist/* wheelhouse/*
+      fi
   dependencies:
     - package-python-wheels-windows
     - package-python-wheels-macos
     - package-python-wheels-manylinux_2_24_x86_64
     - package-python-wheels-manylinux2014_x86_64
     - package-python-wheels-manylinux2010_x86_64
-    - lib-build-linux-x64
   needs:
     - package-python-wheels-windows
     - package-python-wheels-macos
     - package-python-wheels-manylinux_2_24_x86_64
     - package-python-wheels-manylinux2014_x86_64
     - package-python-wheels-manylinux2010_x86_64
-    - lib-build-linux-x64
   artifacts:
     paths:
       - bindings/python/dist/*
       - bindings/python/wheelhouse/*
-  rules:
-    - !reference [.root_namespace, rules]
 
 #   _____     _  _
 #  / ____|  _| || |_
@@ -1174,7 +1030,6 @@ test-csharp-x64-debug:
   needs:
     - lib-windows-debug-x64
 
-
 test-csharp-x64-release:
   stage: binding-test
   tags:
@@ -1188,35 +1043,6 @@ test-csharp-x64-release:
     - lib-windows-release-x64
   needs:
     - lib-windows-release-x64
-
-test-csharp-x86-debug:
-  stage: binding-test
-  tags:
-    - windows
-  variables:
-    ARCH: "x86-debug"
-  script:
-    - cd build/DebugX86/bindings/csharp/test/Debug/net472
-    - dotnet vstest igstester.dll /Platform:x86
-  dependencies:
-    - lib-windows-debug-x86
-  needs:
-    - lib-windows-debug-x86
-
-test-csharp-x86-release:
-  stage: binding-test
-  tags:
-    - windows
-  variables:
-    ARCH: "x86-release"
-  script:
-    - cd build/ReleaseX86/bindings/csharp/test/Release/net472
-    - dotnet vstest igstester.dll /Platform:x86
-  dependencies:
-    - lib-windows-release-x86
-  needs:
-    - lib-windows-release-x86
-
 
 # _____       _ _
 #|  __ \     | (_)
@@ -1241,15 +1067,10 @@ lib-delivery-all:
     - umask 077
     - echo ${SSH_SECRET} | base64 -d > ssh_secret
     - umask 022
-    - echo "Deliver Windows x86"
-    - mkdir --parents library/win32
-    - mv build/ReleaseX86/ingescape-*
-         library/win32/
-    - ls library/win32/ | grep -v 'latest_delivery' > library/win32/latest_delivery
     - echo "Deliver Windows x64"
     - mkdir --parents library/win64
     - mv build/ReleaseX64/ingescape-*
-         library/win64/
+      library/win64/
     - ls library/win64/ | grep -v 'latest_delivery' > library/win64/latest_delivery
     - echo "Deliver macos"
     - mkdir --parents library/macos
@@ -1266,17 +1087,23 @@ lib-delivery-all:
     - echo "Deliver Android armv7a (softfp)"
     - mkdir --parents library/android
     - mv android/ingescape-*
-         library/android/
+      library/android/
     - ls library/android/ | grep -v 'latest_delivery' > library/android/latest_delivery
     - echo "Deliver Android aarch64"
     - mkdir --parents library/android-arm64
     - mv android-arm64/ingescape-*
-         library/android-arm64/
+      library/android-arm64/
     - ls library/android-arm64/ | grep -v 'latest_delivery' > library/android-arm64/latest_delivery
     - echo "Synchronization"
     - rsync --rsh="ssh -i ssh_secret" --recursive library ${DELIVERY_USER}@${DELIVERY_HOST}:${DELIVERY_DESTINATION}
   dependencies:
-    - lib-installer-release-windows-x86
+    - lib-installer-release-windows-x64
+    - lib-installer-macos
+    - lib-installer-linux-x64
+    - lib-installer-runtime-linux-armhf
+    - lib-installer-runtime-android-armv7a-softfp
+    - lib-installer-runtime-android-aarch64
+  needs:
     - lib-installer-release-windows-x64
     - lib-installer-macos
     - lib-installer-linux-x64

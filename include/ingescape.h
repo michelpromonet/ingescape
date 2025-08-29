@@ -31,8 +31,8 @@
 
 //  INGESCAPE version macros for compile-time API detection
 #define INGESCAPE_VERSION_MAJOR 4
-#define INGESCAPE_VERSION_MINOR 2
-#define INGESCAPE_VERSION_PATCH 5
+#define INGESCAPE_VERSION_MINOR 4
+#define INGESCAPE_VERSION_PATCH 4
 
 #define INGESCAPE_MAKE_VERSION(major, minor, patch) \
 ((major) * 10000 + (minor) * 100 + (patch))
@@ -86,22 +86,30 @@ typedef struct _igs_json_t igs_json_t;
 typedef struct _igs_json_node_t igs_json_node_t;
 typedef struct _igs_service_arg_t igs_service_arg_t;
 
-#define IGS_MAX_PATH_LENGTH 4096             //
-#define IGS_MAX_IO_NAME_LENGTH 1024          //
 #define IGS_AGENT_UUID_LENGTH 32             //
+#define IGS_MAX_PATH_LENGTH 4096             //
+#define IGS_MAX_STATE_LENGTH 4096            //
+#define IGS_MAX_IO_NAME_LENGTH 1024          //
+#define IGS_MAX_SERVICE_NAME_LENGTH 1024     //
+#define IGS_MAX_SERVICE_ARG_NAME_LENGTH 1024 //
 #define IGS_MAX_AGENT_NAME_LENGTH 1024       //
-#define IGS_MAX_DESCRIPTION_LENGTH 4096      //
+#define IGS_MAX_AGENT_CLASS_LENGTH 1024      //
+#define IGS_MAX_AGENT_PACKAGE_LENGTH 4096    //
+#define IGS_MAX_DESCRIPTION_LENGTH 4096*4096 //
 #define IGS_MAX_FAMILY_LENGTH 64             //
 #define IGS_MAX_VERSION_LENGTH 64            //
+#define IGS_MAX_DETAILED_TYPE_LENGTH 1024    //
+#define IGS_MAX_SPECIFICATION_LENGTH 4096*4096
+#define IGS_MAX_CONSTRAINT_LENGTH 4096       //
 #define IGS_MAX_LOG_LENGTH 4096              //
-#define IGS_COMMAND_LINE_LENGTH 4096         //
-#define IGS_NETWORK_DEVICE_LENGTH 1024       //
-#define IGS_IP_ADDRESS_LENGTH 1024           //
-#define IGS_MAX_PEER_ID_LENGTH 128           //
-#define IGS_DEFAULT_IPC_FOLDER_PATH "/tmp/ingescape/"  //
 #define IGS_MAX_STRING_MSG_LENGTH 4096       //
+#define IGS_MAX_PEER_ID_LENGTH 128           //
+#define IGS_MAX_COMMAND_LINE_LENGTH 4096     //
+#define IGS_MAX_NETWORK_DEVICE_LENGTH 1024   //
+#define IGS_MAX_IP_ADDRESS_LENGTH 1024       //
 #define IGS_DEFAULT_WORKER_CREDIT 3          //
-#define IGS_DEFAULT_LOG_DIR "~/Documents/Ingescape/logs/"  //
+#define IGS_DEFAULT_IPC_FOLDER_PATH "/tmp/ingescape/"
+#define IGS_DEFAULT_LOG_DIR "~/Documents/Ingescape/logs/"
 
 #ifdef __cplusplus
 extern "C" {
@@ -349,7 +357,9 @@ INGESCAPE_EXPORT igs_result_t igs_output_add_constraint(const char *name, const 
 
 //IO description
 INGESCAPE_EXPORT igs_result_t igs_input_set_description(const char *name, const char *description);
+INGESCAPE_EXPORT char * igs_input_description(const char *name);
 INGESCAPE_EXPORT igs_result_t igs_output_set_description(const char *name, const char *description);
+INGESCAPE_EXPORT char * igs_output_description(const char *name);
 
 /*IO detailed type
  This section enables to decribe precise specifications for IOs,
@@ -397,6 +407,7 @@ INGESCAPE_EXPORT bool igs_output_is_muted(const char *name);
 //services arguments
 struct _igs_service_arg_t{
     char *name;
+    char *description;
     igs_io_value_type_t type;
     union{
         bool b;
@@ -428,10 +439,10 @@ INGESCAPE_EXPORT igs_service_arg_t * igs_service_args_clone(igs_service_arg_t *l
  Requires to pass an agent name or UUID, a service name and a list of arguments specific to the service.
  Token is an optional information to help routing replies.
  Passed arguments list will be deallocated and destroyed by the call. */
-INGESCAPE_EXPORT igs_result_t igs_service_call (const char *agent_name_or_uuid,
-                                                const char *service_name,
-                                                igs_service_arg_t **list,
-                                                const char *token);
+INGESCAPE_EXPORT igs_result_t igs_service_call(const char *agent_name_or_uuid,
+                                               const char *service_name,
+                                               igs_service_arg_t **list,
+                                               const char *token);
 
 /*create /remove / edit a service offered by our agent
  WARNING: only one callback shall be attached to a service
@@ -446,14 +457,22 @@ typedef void (igs_service_fn)(const char *sender_agent_name,
 
 INGESCAPE_EXPORT igs_result_t igs_service_init(const char *name, igs_service_fn cb, void *my_data);
 INGESCAPE_EXPORT igs_result_t igs_service_remove(const char *name);
+INGESCAPE_EXPORT igs_result_t igs_service_set_description (const char *name, const char *description);
+INGESCAPE_EXPORT char * igs_service_description (const char *name); //caller owns returned value
 INGESCAPE_EXPORT igs_result_t igs_service_arg_add(const char *service_name, const char *arg_name, igs_io_value_type_t type);
 INGESCAPE_EXPORT igs_result_t igs_service_arg_remove(const char *service_name,
                                                      const char *arg_name); //removes first occurence of an argument with this name
+INGESCAPE_EXPORT igs_result_t igs_service_arg_set_description(const char *service_name, const char *arg_name, const char *description);
+INGESCAPE_EXPORT char * igs_service_arg_description (const char *service_name, const char *arg_name); //caller owns returned value
 
 //replies are optional and used for specification purposes
 INGESCAPE_EXPORT igs_result_t igs_service_reply_add(const char *service_name, const char *reply_name);
+INGESCAPE_EXPORT igs_result_t igs_service_reply_set_description(const char *service_name, const char *reply_name, const char *description);
+INGESCAPE_EXPORT char * igs_service_reply_description(const char *service_name, const char *reply_name); //caller owns returned value
 INGESCAPE_EXPORT igs_result_t igs_service_reply_remove(const char *service_name, const char *reply_name);
 INGESCAPE_EXPORT igs_result_t igs_service_reply_arg_add(const char *service_name, const char *reply_name, const char *arg_name, igs_io_value_type_t type);
+INGESCAPE_EXPORT igs_result_t igs_service_reply_arg_set_description(const char *service_name, const char *reply_name, const char *arg_name, const char *description);
+INGESCAPE_EXPORT char * igs_service_reply_arg_description(const char *service_name, const char *reply_name, const char *arg_name); //caller owns returned value
 INGESCAPE_EXPORT igs_result_t igs_service_reply_arg_remove(const char *service_name,
                                                            const char *reply_name,
                                                            const char *arg_name);//removes first occurence of an argument with this name
@@ -507,6 +526,7 @@ INGESCAPE_EXPORT igs_result_t igs_attribute_set_data(const char *name, void *val
 
 INGESCAPE_EXPORT igs_result_t igs_attribute_add_constraint(const char *name, const char *constraint);
 INGESCAPE_EXPORT igs_result_t igs_attribute_set_description(const char *name, const char *description);
+INGESCAPE_EXPORT char * igs_attribute_description(const char *name);
 INGESCAPE_EXPORT igs_result_t igs_attribute_set_detailed_type(const char *param_name, const char *type_name, const char *specification);
 INGESCAPE_EXPORT void igs_clear_attribute(const char *name);
 
@@ -730,7 +750,7 @@ INGESCAPE_EXPORT int64_t igs_rt_get_current_timestamp(void);
  When timestamps are enabled, every output publication and every service call
  carry an additional information providing the timestamp of the message on
  the sender side. On the receiver side, timestamp is obtained by calling
- igs_rt_get_current_timestamp*/
+ igs_rt_get_current_timestamp in the corresponding callback*/
 INGESCAPE_EXPORT void igs_rt_set_timestamps(bool enable);
 INGESCAPE_EXPORT bool igs_rt_timestamps(void);
 
@@ -740,7 +760,7 @@ INGESCAPE_EXPORT bool igs_rt_timestamps(void);
  for the current time in microseconds.
  Once igs_rt_set_time has been called, it is necessary to continue calling it
  periodically and manually to update the agent's current time in microseconds.
- NB : a call to igs_rt_set_time  enables timestamps automatically for outputs
+ NB : a call to igs_rt_set_time automatically enables timestamps  for outputs
  and services on all agents in our process. Timestamps cannot be disabled afterwards.
  NB : igs_rt_set_time and igs_rt_time operate at peer level for all the agents
  in the process. All agents in a process use the same time set by igs_rt_set_time.
@@ -874,7 +894,7 @@ INGESCAPE_EXPORT void igs_net_set_discovery_interval(unsigned int interval); //i
 INGESCAPE_EXPORT void igs_net_set_timeout(unsigned int duration); //in milliseconds
 INGESCAPE_EXPORT void  igs_net_raise_sockets_limit(void); //UNIX only, to be called before any ingescape or ZeroMQ activity
 //Set high water marks (HWM) for the publish/subscribe sockets.
-//Setting HWM to 0 means that they are disabled.
+//Setting HWM to 0 means that they are disabled (use at your own risk).
 INGESCAPE_EXPORT void igs_net_set_high_water_marks(int hwm_value);
 
 

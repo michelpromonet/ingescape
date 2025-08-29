@@ -135,14 +135,17 @@ bool s_model_read_io_as_bool (igsagent_t *agent,
             res = (io->value.d >= 0 && io->value.d <= 0) ? false : true;
             break;
         case IGS_STRING_T:
-            if (streq (io->value.s, "true")) {
+            if (!io->value.s){
+                igsagent_warn (agent,"Implicit conversion from NULL string to bool for %s (false was returned)", name);
+                res = false;
+            }else if (streq (io->value.s, "true")) {
                 igsagent_warn (agent, "Implicit conversion from string to bool for %s", name);
                 res = true;
-            } else if (streq (io->value.s, "false")) {
+            }else if (streq (io->value.s, "false")) {
                 igsagent_warn (agent, "Implicit conversion from string to bool for %s", name);
                 res = false;
-            } else {
-                igsagent_warn (agent,"Implicit conversion from double to bool for %s (string value is %s and false was returned)", name, io->value.s);
+            }else {
+                igsagent_warn (agent,"Implicit conversion from string to bool for %s (string value is %s and false was returned)", name, io->value.s);
                 res = false;
             }
             break;
@@ -179,7 +182,11 @@ int s_model_read_io_as_int (igsagent_t *agent,
                 res = (int) (io->value.d + 0.5);
             break;
         case IGS_STRING_T:
-            igsagent_warn (agent, "Implicit conversion from string %s to int for %s", io->value.s, name);
+            if (!io->value.s){
+                igsagent_warn (agent,"Implicit conversion from NULL string to int for %s (false was returned)", name);
+                res = false;
+            }else
+                igsagent_warn (agent, "Implicit conversion from string %s to int for %s", io->value.s, name);
             res = atoi (io->value.s);
             break;
         default:
@@ -212,7 +219,11 @@ double s_model_read_io_as_double (igsagent_t *agent,
             res = io->value.d;
             break;
         case IGS_STRING_T:
-            igsagent_warn (agent, "Implicit conversion from string %s to double for %s", io->value.s, name);
+            if (!io->value.s){
+                igsagent_warn (agent,"Implicit conversion from NULL string to double for %s (0 was returned)", name);
+                res = 0;
+            }else
+                igsagent_warn (agent, "Implicit conversion from string %s to double for %s", io->value.s, name);
             res = atof (io->value.s);
             break;
         default:
@@ -401,26 +412,24 @@ igs_result_t s_model_add_constraint (igsagent_t *self, igs_io_type_t type,
             return IGS_FAILURE;
         }
     }
-    else
-        if (type == IGS_OUTPUT_T) {
-            io = zhashx_lookup (self->definition->outputs_table, name);
-            if (!io) {
-                igsagent_error (self, "Output %s cannot be found", name);
-                return IGS_FAILURE;
-            }
+    else if (type == IGS_OUTPUT_T) {
+        io = zhashx_lookup (self->definition->outputs_table, name);
+        if (!io) {
+            igsagent_error (self, "Output %s cannot be found", name);
+            return IGS_FAILURE;
         }
-        else
-            if (type == IGS_ATTRIBUTE_T) {
-                io = zhashx_lookup (self->definition->attributes_table, name);
-                if (!io) {
-                    igsagent_error (self, "Parameter %s cannot be found", name);
-                    return IGS_FAILURE;
-                }
-            }
-            else {
-                igsagent_error (self, "Unknown IOP type %d", type);
-                return IGS_FAILURE;
-            }
+    }
+    else if (type == IGS_ATTRIBUTE_T) {
+        io = zhashx_lookup (self->definition->attributes_table, name);
+        if (!io) {
+            igsagent_error (self, "Attribute %s cannot be found", name);
+            return IGS_FAILURE;
+        }
+    }
+    else {
+        igsagent_error (self, "Unknown IOP type %d", type);
+        return IGS_FAILURE;
+    }
     if (io->constraint){
         igsagent_warn (self, "%s already has a constraint that will be removed", name);
         definition_free_constraint(&io->constraint);
@@ -434,6 +443,9 @@ igs_result_t s_model_add_constraint (igsagent_t *self, igs_io_type_t type,
         }
         return IGS_FAILURE;
     }
+    definition_update_json(self->definition);
+    self->network_need_to_send_definition_update = true;
+    
     return IGS_SUCCESS;
 }
 
@@ -474,8 +486,46 @@ igs_result_t s_model_set_description(igsagent_t *self, igs_io_type_t type,
             }
     if (io->description)
         free(io->description);
-    io->description = s_strndup(description, IGS_MAX_LOG_LENGTH);
+    io->description = s_strndup(description, IGS_MAX_DESCRIPTION_LENGTH);
+    definition_update_json(self->definition);
+    self->network_need_to_send_definition_update = true;
     return IGS_SUCCESS;
+}
+
+char * s_model_get_description(igsagent_t *self, igs_io_type_t type,
+                                     const char *name)
+{
+    assert(self);
+    assert(name);
+    igs_io_t *io = NULL;
+    if (type == IGS_INPUT_T) {
+        io = zhashx_lookup (self->definition->inputs_table, name);
+        if (!io) {
+            igsagent_error (self, "Input %s cannot be found", name);
+            return NULL;
+        }
+    }
+    else
+        if (type == IGS_OUTPUT_T) {
+            io = zhashx_lookup (self->definition->outputs_table, name);
+            if (!io) {
+                igsagent_error (self, "Output %s cannot be found", name);
+                return NULL;
+            }
+        }
+        else
+            if (type == IGS_ATTRIBUTE_T) {
+                io = zhashx_lookup (self->definition->attributes_table, name);
+                if (!io) {
+                    igsagent_error (self, "Parameter %s cannot be found", name);
+                    return NULL;
+                }
+            }
+            else {
+                igsagent_error (self, "Unknown IOP type %d", type);
+                return NULL;
+            }
+    return (io && io->description) ? strdup(io->description) : NULL;
 }
 
 igs_result_t s_model_set_detailed_type(igsagent_t *self, igs_io_type_t type,
@@ -485,6 +535,7 @@ igs_result_t s_model_set_detailed_type(igsagent_t *self, igs_io_type_t type,
     assert(self);
     assert(name);
     assert(type_name);
+    assert(model_check_string(type_name, IGS_MAX_DETAILED_TYPE_LENGTH));
     assert(specification);
     igs_io_t *io = NULL;
     if (type == IGS_INPUT_T) {
@@ -516,10 +567,12 @@ igs_result_t s_model_set_detailed_type(igsagent_t *self, igs_io_type_t type,
             }
     if (io->detailed_type)
         free(io->detailed_type);
-    io->detailed_type = s_strndup(type_name, IGS_MAX_LOG_LENGTH);
+    io->detailed_type = s_strndup(type_name, IGS_MAX_DETAILED_TYPE_LENGTH);
     if (io->specification)
         free(io->specification);
-    io->specification = s_strndup(specification, IGS_MAX_LOG_LENGTH);
+    io->specification = s_strndup(specification, IGS_MAX_SPECIFICATION_LENGTH);
+    definition_update_json(self->definition);
+    self->network_need_to_send_definition_update = true;
     return IGS_SUCCESS;
 }
 
@@ -722,9 +775,10 @@ char *s_model_get_io_value_as_string (igs_io_t *io)
                               "false");
                 break;
             case IGS_STRING_T:
-                str_value = (char *) zmalloc (strlen (io->value.s) + 1);
-                snprintf (str_value, strlen (io->value.s) + 1, "%s",
-                          io->value.s);
+                if (io->value.s){
+                    str_value = (char *) zmalloc (strlen (io->value.s) + 1);
+                    snprintf (str_value, strlen (io->value.s) + 1, "%s", io->value.s);
+                }
                 break;
             case IGS_IMPULSION_T:
                 break;
@@ -748,7 +802,7 @@ uint8_t *model_string_to_bytes (char *string)
 {
     assert (string);
     size_t slength = strlen (string);
-    if ((slength % 2) != 0) // must be even
+    if (slength < 2 || (slength % 2) != 0) // must be even with at least two chars
         return NULL;
     size_t dlength = slength / 2;
     uint8_t *data = (uint8_t *) zmalloc (dlength);
@@ -770,6 +824,59 @@ uint8_t *model_string_to_bytes (char *string)
         index++;
     }
     return data;
+}
+
+size_t model_clean_string(char *string, int64_t max){
+    assert(string);
+    if (max <= 0)
+        max = INT64_MAX;
+    char *char_index = string;
+    size_t offset = 0;
+    int64_t write_index = 0;
+    while (1) {
+        while (*(char_index+offset) == '\t'
+            || *(char_index+offset) == '\v'
+            || *(char_index+offset) == '\r'
+            || *(char_index+offset) == '\n'
+            || *(char_index+offset) == '\f'){
+            offset++;
+        }
+        if (offset)
+            string[write_index] = *(char_index + offset);
+        if (string[write_index] == '\0')
+            break;
+        write_index++;
+        char_index++;
+        if (write_index == max){
+            string[write_index] = '\0';
+            offset++; //to signal a change
+            break;
+        }
+    }
+    return offset;
+}
+
+bool model_check_string(const char *string, int64_t max){
+    assert(string);
+    if (max <= 0)
+        max = INT64_MAX;
+    int64_t offset = 0;
+    while (1) {
+        if (string[offset] == '\t'
+            || string[offset] == '\v'
+            || string[offset] == '\r'
+            || string[offset] == '\n'
+            || string[offset] == '\f'){
+            igs_error("string '%s' contains invalid characters", string);
+            return false;
+        }
+        if (string[offset] == '\0')
+            break;
+        if (offset >= max)
+            return false;
+        offset++;
+    }
+    return true;
 }
 
 igs_mutex_t s_model_read_write_mutex;
@@ -817,19 +924,27 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
     if (io->constraint && agent->enforce_constraints){
         if (io->value_type == IGS_INTEGER_T){
             int converted_value = 0;
-            switch (value_type) {
-                case IGS_STRING_T:
-                    converted_value = atoi((char *)value);
-                    break;
-                case IGS_DATA_T:
-                    igsagent_error(agent, "constraint type error for %s (value is data and IOP is integer)", io->name);
-                    return NULL;
-                case IGS_DOUBLE_T:
-                    converted_value = (int)(*(double*)value);
-                    break;
-                default:
-                    converted_value = *(int*)value;
-                    break;
+            if (value && size > 0){
+                switch (value_type) {
+                    case IGS_STRING_T:
+                        converted_value = atoi((char *)value);
+                        break;
+                    case IGS_DATA_T:{
+                        if (size == sizeof(int)){
+                            converted_value = *(int *)value;
+                            break;
+                        }else{
+                            igsagent_error(agent, "constraint type error for %s: value is data with wrong size (%zu bytes)", io->name, size);
+                            return NULL;
+                        }
+                    }
+                    case IGS_DOUBLE_T:
+                        converted_value = (int)(*(double*)value);
+                        break;
+                    default:
+                        converted_value = *(int*)value;
+                        break;
+                }
             }
 
             switch (io->constraint->type) {
@@ -860,20 +975,28 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
             }
         }else if(io->value_type == IGS_DOUBLE_T){
             double converted_value = 0;
-            switch (value_type) {
-                case IGS_STRING_T:
-                    converted_value = atof((char *)value);
-                    break;
-                case IGS_DATA_T:
-                    igsagent_error(agent, "constraint type error for %s (value is data and IOP is double)", io->name);
-                    return NULL;
-                case IGS_INTEGER_T:
-                case IGS_BOOL_T:
-                    converted_value = (double)(*(int*)value);
-                    break;
-                default:
-                    converted_value = *(double*)value;
-                    break;
+            if (value && size > 0){
+                switch (value_type) {
+                    case IGS_STRING_T:
+                        converted_value = atof((char *)value);
+                        break;
+                    case IGS_DATA_T:{
+                        if (size == sizeof(double)){
+                            converted_value = *(double *)value;
+                            break;
+                        }else{
+                            igsagent_error(agent, "constraint type error for %s: value is data with wrong size (%zu bytes)", io->name, size);
+                            return NULL;
+                        }
+                    }
+                    case IGS_INTEGER_T:
+                    case IGS_BOOL_T:
+                        converted_value = (double)(*(int*)value);
+                        break;
+                    default:
+                        converted_value = *(double*)value;
+                        break;
+                }
             }
 
             switch (io->constraint->type) {
@@ -904,28 +1027,33 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
             }
         }else if (io->value_type == IGS_STRING_T){
             char *converted_value = NULL;
-            switch (value_type) {
-                case IGS_STRING_T:
-                    converted_value = (char *)value;
-                    break;
-                case IGS_DATA_T:
-                    igsagent_error(agent, "constraint type error for %s (value is data and IOP is string)", io->name);
-                    return NULL;
-                case IGS_INTEGER_T:
-                case IGS_BOOL_T:
-                    snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d",
-                              (value == NULL) ? 0 : *(int *) (value));
-                    converted_value = buf;
-                    break;
-                case IGS_DOUBLE_T:
-                    snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%f",
-                              (value == NULL) ? 0 : *(double *) (value));
-                    converted_value = buf;
-                    break;
-                default:
-                    snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "");
-                    converted_value = buf;
-                    break;
+            if (value && size > 0){
+                switch (value_type) {
+                    case IGS_STRING_T:
+                        converted_value = (char *)value;
+                        break;
+                    case IGS_DATA_T:{
+                        if (((char*)value)[size - 1] == '\0'){
+                            //NULL terminated data can be interpreted as string
+                            converted_value = (char*)value;
+                        }else{
+                            igsagent_error(agent, "constraint type error for %s (value is data and IOP is string)", io->name);
+                            return NULL;
+                        }
+                    }
+                    case IGS_INTEGER_T:
+                    case IGS_BOOL_T:
+                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d", *(int *) (value));
+                        converted_value = buf;
+                        break;
+                    case IGS_DOUBLE_T:
+                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%f", *(double *) (value));
+                        converted_value = buf;
+                        break;
+                    default:
+                        converted_value = "";
+                        break;
+                }
             }
             if (!converted_value){
                 igsagent_error(agent, "constraint error for %s (value is NULL)", io->name);
@@ -938,271 +1066,311 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
         }
     }
 
-    // TODO: optimize if value is NULL
-    switch (value_type) {
-        case IGS_INTEGER_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    io->value_size = sizeof (int);
-                    io->value.i = (value == NULL) ? 0 : *(int *) (value);
-                    break;
-                case IGS_DOUBLE_T:
-                    io->value_size = sizeof (double);
-                    io->value.d = (value == NULL) ? 0 : *(int *) (value);
-                    break;
-                case IGS_BOOL_T:
-                    io->value_size = sizeof (bool);
-                    io->value.b = (value == NULL)? false : ((*(int *) (value)) ? true : false);
-                    break;
-                case IGS_STRING_T: {
-                    if (io->value.s)
-                        free (io->value.s);
-                    if (!value)
-                        io->value.s = strdup ("");
-                    else {
-                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d",
-                                  (value == NULL) ? 0 : *(int *) (value));
+    
+    if (!value || size == 0){
+        switch (io->value_type) {
+            case IGS_INTEGER_T:
+                io->value_size = sizeof (int);
+                io->value.i = 0;
+                break;
+            case IGS_DOUBLE_T:
+                io->value_size = sizeof (double);
+                io->value.d = 0;
+                break;
+            case IGS_BOOL_T:
+                io->value_size = sizeof (bool);
+                io->value.b = false;
+                break;
+            case IGS_STRING_T: {
+                if (io->value.s)
+                    free (io->value.s);
+                io->value.s = NULL;
+                io->value_size = 0;
+            } break;
+            case IGS_IMPULSION_T:
+                io->value_size = 0;
+                break;
+            case IGS_DATA_T: {
+                if (io->value.data)
+                    free (io->value.data);
+                io->value.data = NULL;
+                io->value_size = 0;
+            } break;
+            default:
+                igsagent_error(agent, "%s has an invalid value type %d",
+                               name, io->value_type);
+                ret = 0;
+                break;
+        }
+    }else{
+        switch (value_type) {
+            case IGS_INTEGER_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        io->value_size = sizeof (int);
+                        io->value.i = *(int *) (value);
+                        break;
+                    case IGS_DOUBLE_T:
+                        io->value_size = sizeof (double);
+                        io->value.d = (double) *(int *) (value);
+                        break;
+                    case IGS_BOOL_T:
+                        io->value_size = sizeof (bool);
+                        io->value.b = (bool) *(int *) (value);
+                        break;
+                    case IGS_STRING_T: {
+                        if (io->value.s)
+                            free (io->value.s);
+                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d", *(int *) (value));
                         io->value.s = strdup (buf);
-                    }
-                    io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    io->value.data = (void *) zmalloc (sizeof (int));
-                    memcpy (io->value.data, value, sizeof (int));
-                    io->value_size = sizeof (int);
-                } break;
-                default:
-                    igsagent_error (agent, "%s has an invalid value type %d",
-                                    name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        case IGS_DOUBLE_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    io->value_size = sizeof (int);
-                    io->value.i = (value == NULL) ? 0 : (int) (*(double *) (value));
-                    break;
-                case IGS_DOUBLE_T:
-                    io->value_size = sizeof (double);
-                    io->value.d = (value == NULL) ? 0 : (double) (*(double *) (value));
-                    break;
-                case IGS_BOOL_T:
-                    io->value_size = sizeof (bool);
-                    io->value.b = (value == NULL) ? false : (((int) (*(double *) (value))) ? true : false);
-                    break;
-                case IGS_STRING_T: {
-                    if (io->value.s)
-                        free (io->value.s);
-                    if (value == NULL)
-                        io->value.s = strdup ("");
-                    else {
-                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%lf",
-                                  (value == NULL) ? 0 : *(double *) (value));
-                        io->value.s = strdup (buf);
-                    }
-                    io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    io->value.data = (void *) zmalloc (sizeof (double));
-                    memcpy (io->value.data, value, sizeof (double));
-                    io->value_size = sizeof (double);
-                } break;
-                default:
-                    igsagent_error(agent, "%s has an invalid value type %d",
-                                   name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        case IGS_BOOL_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    io->value_size = sizeof (int);
-                    io->value.i = (value == NULL) ? 0 : *(bool *) (value);
-                    break;
-                case IGS_DOUBLE_T:
-                    io->value_size = sizeof (double);
-                    io->value.d = (value == NULL) ? 0 : *(bool *) (value);
-                    break;
-                case IGS_BOOL_T:
-                    io->value_size = sizeof (bool);
-                    io->value.b = (value == NULL) ? false : *(bool *) value;
-                    break;
-                case IGS_STRING_T: {
-                    if (io->value.s)
-                        free (io->value.s);
-                    if (value == NULL)
-                        io->value.s = strdup ("");
-                    else {
-                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d",
-                                  (value == NULL) ? 0 : *(bool *) value);
-                        io->value.s = strdup (buf);
-                    }
-                    io->value_size =
-                    (strlen (io->value.s) + 1) * sizeof (char);
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    io->value.data = (void *) zmalloc (sizeof (bool));
-                    memcpy (io->value.data, value, sizeof (bool));
-                    io->value_size = sizeof (bool);
-                } break;
-                default:
-                    igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        case IGS_STRING_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    io->value_size = sizeof (int);
-                    io->value.i = (value == NULL) ? 0 : atoi ((char *) value);
-                    break;
-                case IGS_DOUBLE_T:
-                    io->value_size = sizeof (double);
-                    io->value.d = (value == NULL) ? 0 : atof ((char *) value);
-                    break;
-                case IGS_BOOL_T: {
-                    char *v = (char *) value;
-                    if (v == NULL)
-                        io->value.b = false;
-                    else if (streq (v, "false") || streq (v, "False") || streq (v, "FALSE"))
-                        io->value.b = false;
-                    else if (streq (v, "true") || streq (v, "True") || streq (v, "TRUE"))
-                        io->value.b = true;
-                    else
-                        io->value.b = atoi (v) ? true : false;
+                        io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
+                    } break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
+                        io->value.data = (void *) zmalloc (sizeof (int));
+                        assert(io->value.data);
+                        memcpy (io->value.data, value, sizeof (int));
+                        io->value_size = sizeof (int);
+                    } break;
+                    default:
+                        igsagent_error (agent, "%s has an invalid value type %d",
+                                        name, io->value_type);
+                        ret = 0;
+                        break;
                 }
-                    io->value_size = sizeof (bool);
-                    break;
-                case IGS_STRING_T: {
-                    if (io->value.s)
-                        free (io->value.s);
-                    if (value == NULL)
-                        io->value.s = strdup ("");
-                    else
+            } break;
+            case IGS_DOUBLE_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        io->value_size = sizeof (int);
+                        io->value.i = (int) (*(double *) (value));
+                        break;
+                    case IGS_DOUBLE_T:
+                        io->value_size = sizeof (double);
+                        io->value.d = (*(double *) (value));
+                        break;
+                    case IGS_BOOL_T:
+                        io->value_size = sizeof (bool);
+                        io->value.b = (bool) (*(double *) (value));
+                        break;
+                    case IGS_STRING_T: {
+                        if (io->value.s)
+                            free (io->value.s);
+                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%lf", *(double *) (value));
+                        io->value.s = strdup (buf);
+                        io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
+                    } break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
+                        io->value.data = (void *) zmalloc (sizeof (double));
+                        assert(io->value.data);
+                        memcpy (io->value.data, value, sizeof (double));
+                        io->value_size = sizeof (double);
+                    } break;
+                    default:
+                        igsagent_error(agent, "%s has an invalid value type %d",
+                                       name, io->value_type);
+                        ret = 0;
+                        break;
+                }
+            } break;
+            case IGS_BOOL_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        io->value_size = sizeof (int);
+                        io->value.i = (int) *(bool *) (value);
+                        break;
+                    case IGS_DOUBLE_T:
+                        io->value_size = sizeof (double);
+                        io->value.d = (double) *(bool *) (value);
+                        break;
+                    case IGS_BOOL_T:
+                        io->value_size = sizeof (bool);
+                        io->value.b = *(bool *) value;
+                        break;
+                    case IGS_STRING_T: {
+                        if (io->value.s)
+                            free (io->value.s);
+                        snprintf (buf, NUMBER_TO_STRING_MAX_LENGTH + 1, "%d", (*(bool *) value) ? true : false);
+                        io->value.s = strdup (buf);
+                        io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
+                    } break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
+                        io->value.data = (void *) zmalloc (sizeof (bool));
+                        assert(io->value.data);
+                        memcpy (io->value.data, value, sizeof (bool));
+                        io->value_size = sizeof (bool);
+                    } break;
+                    default:
+                        igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
+                        ret = 0;
+                        break;
+                }
+            } break;
+            case IGS_STRING_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        io->value_size = sizeof (int);
+                        io->value.i = atoi ((char *) value);
+                        break;
+                    case IGS_DOUBLE_T:
+                        io->value_size = sizeof (double);
+                        io->value.d = atof ((char *) value);
+                        break;
+                    case IGS_BOOL_T: {
+                        char *v = (char *) value;
+                        if (streq (v, "false") || streq (v, "False") || streq (v, "FALSE"))
+                            io->value.b = false;
+                        else if (streq (v, "true") || streq (v, "True") || streq (v, "TRUE"))
+                            io->value.b = true;
+                        else
+                            io->value.b = atoi (v) ? true : false;
+                    }
+                        io->value_size = sizeof (bool);
+                        break;
+                    case IGS_STRING_T: {
+                        if (io->value.s)
+                            free (io->value.s);
                         io->value.s = strdup ((char *) value);
-                    io->value_size =
-                    (strlen (io->value.s) + 1) * sizeof (char);
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    size_t s = 0;
-                    if (value) {
+                        io->value_size = (strlen (io->value.s) + 1) * sizeof (char);
+                    } break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
                         uint8_t *converted = model_string_to_bytes (value);
                         if (converted){
                             io->value.data = converted;
-                            s = strlen (value) / 2;
+                            io->value_size = strlen (value) / 2;
                         }else {
-                            igs_error ("string %s is not a valid hexadecimal-encoded string", (char *) value);
-                            return NULL;
+                            igs_warn ("string %s is not a valid hexadecimal-encoded string and will be encoded as raw data", (char *) value);
+                            size_t value_size = (strlen ((char*)value) + 1) * sizeof (char);
+                            io->value.data = (void *) zmalloc (value_size);
+                            assert(io->value.data);
+                            memcpy (io->value.data, value, value_size);
+                            io->value_size = value_size;
                         }
-                    }
-                    io->value_size = s;
-                } break;
-                default:
-                    igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        case IGS_IMPULSION_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    io->value_size = sizeof (int);
-                    io->value.i = 0;
-                    break;
-                case IGS_DOUBLE_T:
-                    io->value_size = sizeof (double);
-                    io->value.d = 0.0;
-                    break;
-                case IGS_BOOL_T:
-                    io->value_size = sizeof (bool);
-                    io->value.b = false;
-                    break;
-                case IGS_STRING_T: {
-                    if (io->value.s)
-                        free (io->value.s);
-                    io->value.s = strdup ("");
-                    io->value_size = sizeof (char);
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    io->value_size = 0;
-                } break;
-                default:
-                    igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        case IGS_DATA_T: {
-            switch (io->value_type) {
-                case IGS_INTEGER_T:
-                    igsagent_warn (agent, "Raw data is not allowed into integer IOP %s",name);
-                    ret = 0;
-                    break;
-                case IGS_DOUBLE_T:
-                    igsagent_warn (agent, "Raw data is not allowed into double IOP %s",name);
-                    ret = 0;
-                    break;
-                case IGS_BOOL_T:
-                    igsagent_warn (agent, "Raw data is not allowed into boolean IOP %s",name);
-                    ret = 0;
-                    break;
-                case IGS_STRING_T: {
-                    igsagent_warn (agent, "Raw data is not allowed into string IOP %s",name);
-                    ret = 0;
-                } break;
-                case IGS_IMPULSION_T:
-                    io->value_size = 0;
-                    break;
-                case IGS_DATA_T: {
-                    if (io->value.data)
-                        free (io->value.data);
-                    io->value.data = NULL;
-                    io->value.data = (void *) zmalloc (size);
-                    memcpy (io->value.data, value, size);
-                    io->value_size = size;
-                } break;
-                default:
-                    igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
-                    ret = 0;
-                    break;
-            }
-        } break;
-        default:
-            break;
+                    } break;
+                    default:
+                        igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
+                        ret = 0;
+                        break;
+                }
+            } break;
+            case IGS_IMPULSION_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        io->value_size = sizeof (int);
+                        io->value.i = 0;
+                        break;
+                    case IGS_DOUBLE_T:
+                        io->value_size = sizeof (double);
+                        io->value.d = 0.0;
+                        break;
+                    case IGS_BOOL_T:
+                        io->value_size = sizeof (bool);
+                        io->value.b = false;
+                        break;
+                    case IGS_STRING_T: {
+                        if (io->value.s)
+                            free (io->value.s);
+                        io->value.s = NULL;
+                        io->value_size = 0;
+                    } break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
+                        io->value.data = NULL;
+                        io->value_size = 0;
+                    } break;
+                    default:
+                        igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
+                        ret = 0;
+                        break;
+                }
+            } break;
+            case IGS_DATA_T: {
+                switch (io->value_type) {
+                    case IGS_INTEGER_T:
+                        if (size == sizeof(int)){
+                            io->value.i = *(int*)value;
+                            io->value_size = sizeof(int);
+                        }else{
+                            igsagent_error(agent, "Raw data does not have proper size for integer IOP %s (%zu bytes vs %zu bytes expected)",
+                                           name, size, sizeof(int));
+                            ret = 0;
+                        }
+                        break;
+                    case IGS_DOUBLE_T:
+                        if (size == sizeof(double)){
+                            io->value.d = *(double*)value;
+                            io->value_size = sizeof(double);
+                        }else{
+                            igsagent_error(agent, "Raw data does not have proper size for double IOP %s (%zu bytes vs %zu bytes expected)",
+                                           name, size, sizeof(double));
+                            ret = 0;
+                        }
+                        break;
+                    case IGS_BOOL_T:
+                        if (size == sizeof(bool)){
+                            io->value.b = *(bool*)value;
+                            io->value_size = sizeof(bool);
+                        }else{
+                            igsagent_error(agent, "Raw data does not have proper size for bool IOP %s (%zu bytes vs %zu bytes expected)",
+                                           name, size, sizeof(bool));
+                            ret = 0;
+                        }
+                        break;
+                        break;
+                    case IGS_STRING_T:
+                        if (((char*)value)[size-1] == '\0'){
+                            io->value.s = (void *) zmalloc (size);
+                            assert(io->value.s);
+                            memcpy (io->value.s, value, size);
+                            io->value_size = size;
+                        }else{
+                            igsagent_error(agent, "Non NULL-terminated data is not allowed into string IOP %s",name);
+                            ret = 0;
+                        }
+                        break;
+                    case IGS_IMPULSION_T:
+                        io->value_size = 0;
+                        break;
+                    case IGS_DATA_T: {
+                        if (io->value.data)
+                            free (io->value.data);
+                        io->value.data = (void *) zmalloc (size);
+                        assert(io->value.data);
+                        memcpy (io->value.data, value, size);
+                        io->value_size = size;
+                    } break;
+                    default:
+                        igsagent_error(agent, "%s has an invalid value type %d", name, io->value_type);
+                        ret = 0;
+                        break;
+                }
+            } break;
+            default:
+                break;
+        }
     }
 
     if (ret) {
@@ -1243,8 +1411,13 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
                 log_io_value = strdup (log_io_value_buffer);
                 break;
             case IGS_STRING_T:
-                log_io_value = zmalloc ((strlen (io->value.s) + strlen ("string ") + 1) * sizeof (char));
-                sprintf (log_io_value, "string %s", io->value.s);
+                if (io->value.s){
+                    log_io_value = zmalloc ((strlen (io->value.s) + strlen ("string ") + 1) * sizeof (char));
+                    sprintf (log_io_value, "string %s", io->value.s);
+                } else {
+                    log_io_value = zmalloc ((strlen ("null string") + 1) * sizeof (char));
+                    sprintf (log_io_value, "null string");
+                }
                 break;
             case IGS_DATA_T: {
                 if (core_context->enable_data_logging) {
@@ -1255,8 +1428,7 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
                         sprintf (log_io_value, "data %s", hex_chunk);
                         free (hex_chunk);
                         zchunk_destroy (&chunk);
-                    }
-                    else {
+                    } else {
                         log_io_value = (void *) zmalloc ((strlen ("data 00") + 1) * sizeof (char));
                         sprintf (log_io_value, "data 00");
                     }
@@ -1264,7 +1436,7 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
                 else {
                     snprintf (log_io_value_buffer,
                               MAX_IOP_VALUE_LOG_BUFFER_LENGTH,
-                              "data |size: %zu bytes", io->value_size);
+                              "data | size: %zu bytes", io->value_size);
                     log_io_value = strdup (log_io_value_buffer);
                 }
             } break;
@@ -1274,8 +1446,9 @@ igs_io_t *model_write (igsagent_t *agent, const char *name,
         igsagent_debug (agent, "set %s %s to %s", log_io_type, name, log_io_value);
         if (log_io_value)
             free (log_io_value);
+        return io;
     }
-    return io;
+    return NULL;
 }
 
 void model_LOCKED_handle_io_callbacks (igsagent_t *agent, igs_io_t *io){
@@ -2040,6 +2213,17 @@ igs_result_t igsagent_input_set_description(igsagent_t *self, const char *name, 
     return res;
 }
 
+char * igsagent_input_description(igsagent_t *self, const char *name)
+{
+    assert (self);
+    if (!self->uuid)
+        return NULL;
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    char * description =  s_model_get_description(self, IGS_INPUT_T, name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
+}
+
 igs_result_t igsagent_output_set_description(igsagent_t *self, const char *name, const char *description)
 {
     assert (self);
@@ -2051,6 +2235,17 @@ igs_result_t igsagent_output_set_description(igsagent_t *self, const char *name,
     return res;
 }
 
+char * igsagent_output_description(igsagent_t *self, const char *name)
+{
+    assert (self);
+    if (!self->uuid)
+        return NULL;
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    char * description =  s_model_get_description(self, IGS_OUTPUT_T, name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
+}
+
 igs_result_t igsagent_attribute_set_description(igsagent_t *self, const char *name, const char *description)
 {
     assert (self);
@@ -2060,6 +2255,17 @@ igs_result_t igsagent_attribute_set_description(igsagent_t *self, const char *na
     igs_result_t res =  s_model_set_description(self, IGS_ATTRIBUTE_T, name, description);
     model_read_write_unlock(__FUNCTION__, __LINE__);
     return res;
+}
+
+char * igsagent_attribute_description(igsagent_t *self, const char *name)
+{
+    assert (self);
+    if (!self->uuid)
+        return NULL;
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    char * description =  s_model_get_description(self, IGS_ATTRIBUTE_T, name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
 }
 
 igs_result_t igsagent_input_set_detailed_type(igsagent_t *self, const char *name,

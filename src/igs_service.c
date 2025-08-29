@@ -29,6 +29,10 @@ void s_service_free_service_arguments (igs_service_arg_t **args)
             free (arg->name);
             arg->name = NULL;
         }
+        if (arg->description){
+            free (arg->description);
+            arg->description = NULL;
+        }
         if (arg->type == IGS_DATA_T && arg->data)
             free (arg->data);
         else if (arg->type == IGS_STRING_T && arg->c)
@@ -169,7 +173,7 @@ void service_free_service (igs_service_t **s)
 igs_result_t service_make_values_to_arguments_from_message (igs_service_arg_t **args,
                                                             igs_service_t *service,
                                                             zmsg_t *msg){
-    assert(args && !*args);
+    assert(args);
     assert(service);
     assert(msg);
     
@@ -200,14 +204,20 @@ igs_result_t service_make_values_to_arguments_from_message (igs_service_arg_t **
                 case IGS_STRING_T:
                     if (current->c)
                         free (current->c);
-                    current->c = (char *) zmalloc (size);
-                    memcpy (current->c, zframe_data (f), size);
+                    if (size > 0){
+                      current->c = (char *) zmalloc (size);
+                      memcpy (current->c, zframe_data (f), size);
+                    }else
+                      current->c = NULL;
                     break;
                 case IGS_DATA_T:
                     if (current->data)
                         free (current->data);
-                    current->data = (char *) zmalloc (size);
-                    memcpy (current->data, zframe_data (f), size);
+                    if (size > 0){
+                      current->data = zmalloc (size);
+                      memcpy (current->data, zframe_data (f), size);
+                    } else
+                      current->data = NULL;
                     break;
                     
                 default:
@@ -218,6 +228,7 @@ igs_result_t service_make_values_to_arguments_from_message (igs_service_arg_t **
         }else{
             igs_error("passed message misses elements to match with the expected args for service %s (stopped at %s)",
                       service->name, current->name);
+            s_service_free_service_arguments(args);
             return IGS_FAILURE;
         }
         previous = current;
@@ -422,10 +433,6 @@ void igs_service_args_add_string (igs_service_arg_t **list, const char *value)
         new->c = strdup (value);
         new->size = strlen (value) + 1;
     }
-    else {
-        new->c = NULL;
-        new->size = 0;
-    }
     if (!*list)
         *list = new;
     else{
@@ -443,9 +450,11 @@ void igs_service_args_add_data (igs_service_arg_t **list,
     assert(list);
     igs_service_arg_t *new = (igs_service_arg_t *) zmalloc (sizeof (igs_service_arg_t));
     new->type = IGS_DATA_T;
-    new->data = (void *) zmalloc (size);
-    memcpy (new->data, value, size);
-    new->size = size;
+    if (value && size){
+        new->data = (void *) zmalloc (size);
+        memcpy (new->data, value, size);
+        new->size = size;
+    }
     if (!*list)
         *list = new;
     else{
@@ -465,6 +474,7 @@ igs_result_t igsagent_service_init (igsagent_t *agent,
     if (!agent->uuid)
         return IGS_FAILURE;
     assert (name && strlen (name) > 0);
+    assert(model_check_string(name, IGS_MAX_SERVICE_NAME_LENGTH));
     assert (cb);
     assert(agent->definition);
     
@@ -477,16 +487,12 @@ igs_result_t igsagent_service_init (igsagent_t *agent,
     }else if (!s){
         // service is completely new: allocate it
         s = (igs_service_t *) zmalloc (sizeof (igs_service_t));
-        if (strnlen (name, IGS_MAX_STRING_MSG_LENGTH) == IGS_MAX_STRING_MSG_LENGTH) {
-            s->name = s_strndup (name, IGS_MAX_STRING_MSG_LENGTH);
-            igsagent_warn (agent, "service name has been shortened to %s", s->name);
-        } else
-            s->name = s_strndup (name, IGS_MAX_STRING_MSG_LENGTH);
+        s->name = s_strndup (name, IGS_MAX_SERVICE_NAME_LENGTH);
         s->replies_names_ordered = zlist_new();
         zlist_comparefn(s->replies_names_ordered, (zlist_compare_fn*) strcmp);
         zlist_autofree(s->replies_names_ordered);
         s->replies = zhashx_new();
-        zlist_append(agent->definition->services_names_ordered, strdup(s->name));
+        zlist_append(agent->definition->services_names_ordered, s->name);
         zhashx_insert(agent->definition->services_table, s->name, s);
         definition_update_json (agent->definition);
         agent->network_need_to_send_definition_update = true;
@@ -520,6 +526,43 @@ igs_result_t igsagent_service_remove (igsagent_t *agent, const char *name)
     return IGS_SUCCESS;
 }
 
+igs_result_t igsagent_service_set_description (igsagent_t *agent, const char *name, const char *description)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return IGS_FAILURE;
+    assert (name);
+    assert (description);
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *service = zhashx_lookup(agent->definition->services_table, name);
+    if (!service) {
+        igsagent_error (agent, "service with name '%s' does not exist", name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    service->description = s_strndup (description, IGS_MAX_DESCRIPTION_LENGTH);
+    definition_update_json (agent->definition);
+    agent->network_need_to_send_definition_update = true;
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return IGS_SUCCESS;
+}
+
+char * igsagent_service_description (igsagent_t *agent, const char *name)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return NULL;
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *service = zhashx_lookup(agent->definition->services_table, name);
+    if (!service)
+        igsagent_error (agent, "service with name '%s' does not exist", name);
+    char *res = (service && (service->description)) ? strdup (service->description) : NULL;
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return res;
+}
+
 igs_result_t igsagent_service_arg_add (igsagent_t *agent,
                                        const char *service_name,
                                        const char *arg_name,
@@ -530,6 +573,7 @@ igs_result_t igsagent_service_arg_add (igsagent_t *agent,
         return IGS_FAILURE;
     assert (service_name);
     assert (arg_name && strlen (arg_name) > 0);
+    assert(model_check_string(arg_name, IGS_MAX_SERVICE_ARG_NAME_LENGTH));
     assert (agent->definition);
     if (type == IGS_IMPULSION_T) {
         igsagent_error (agent, "impulsion type is not allowed as a service argument");
@@ -547,12 +591,7 @@ igs_result_t igsagent_service_arg_add (igsagent_t *agent,
         return IGS_FAILURE;
     }
     igs_service_arg_t *a = (igs_service_arg_t *) zmalloc (sizeof (igs_service_arg_t));
-    if (strnlen (arg_name, IGS_MAX_STRING_MSG_LENGTH) == IGS_MAX_STRING_MSG_LENGTH) {
-        a->name = s_strndup (arg_name, IGS_MAX_STRING_MSG_LENGTH);
-        igsagent_warn (agent, "service argument name has been shortened to %s", a->name);
-    }
-    else
-        a->name = s_strndup (arg_name, IGS_MAX_STRING_MSG_LENGTH);
+    a->name = s_strndup (arg_name, IGS_MAX_SERVICE_ARG_NAME_LENGTH);
     switch (type) {
         case IGS_BOOL_T:
             a->size = sizeof (bool);
@@ -614,6 +653,8 @@ igs_result_t igsagent_service_arg_remove (igsagent_t *agent,
             else
                 s->arguments = arg->next;
             free (arg->name);
+            if (arg->description)
+                free (arg->description);
             if (arg->type == IGS_DATA_T && arg->data)
                 free (arg->data);
             else if (arg->type == IGS_STRING_T && arg->data)
@@ -633,12 +674,81 @@ igs_result_t igsagent_service_arg_remove (igsagent_t *agent,
     return IGS_SUCCESS;
 }
 
+igs_result_t igsagent_service_arg_set_description (igsagent_t *agent,
+                                                   const char *service_name,
+                                                   const char *arg_name,
+                                                   const char *description)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return IGS_FAILURE;
+    assert (service_name);
+    assert (arg_name);
+    assert (description);
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    bool found = false;
+    igs_service_arg_t *arg = s->arguments;
+    while (arg) {
+        if (streq (arg_name, arg->name)) {
+            arg->description = s_strndup (description, IGS_MAX_DESCRIPTION_LENGTH);
+            found = true;
+            definition_update_json (agent->definition);
+            agent->network_need_to_send_definition_update = true;
+            break;
+        }
+        arg = arg->next;
+    }
+    if (!found)
+        igsagent_error (agent, "no argument named %s for service %s", arg_name, service_name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return !found ? IGS_FAILURE : IGS_SUCCESS;
+}
+
+char * igsagent_service_arg_description(igsagent_t *agent, const char *service_name, const char *arg_name)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return NULL;
+    assert (service_name);
+    assert (arg_name);
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return NULL;
+    }
+    char * description = NULL;
+    igs_service_arg_t *arg = s->arguments;
+    while (arg) {
+        if (streq (arg_name, arg->name)) {
+            if (arg->description)
+                description = s_strndup (arg->description, IGS_MAX_DESCRIPTION_LENGTH);
+            break;
+        }
+        arg = arg->next;
+    }
+    if (description == NULL)
+        igsagent_error (agent, "no argument named %s for service %s", arg_name, service_name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
+}
+
 igs_result_t igsagent_service_reply_add(igsagent_t *agent, const char *service_name, const char *reply_name){
     assert (agent);
     if (!agent->uuid)
         return IGS_FAILURE;
     assert (service_name);
     assert (reply_name);
+    assert(model_check_string(reply_name, IGS_MAX_SERVICE_NAME_LENGTH));
     assert (agent->definition);
     model_read_write_lock(__FUNCTION__, __LINE__);
     igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
@@ -654,21 +764,73 @@ igs_result_t igsagent_service_reply_add(igsagent_t *agent, const char *service_n
         return IGS_FAILURE;
     }
     r = (igs_service_t *) zmalloc (sizeof (igs_service_t));
-    if (strnlen (reply_name, IGS_MAX_STRING_MSG_LENGTH) == IGS_MAX_STRING_MSG_LENGTH) {
-        r->name = s_strndup (reply_name, IGS_MAX_STRING_MSG_LENGTH);
-        igsagent_warn (agent, "service name has been shortened to %s", r->name);
-    } else
-        r->name = s_strndup (reply_name, IGS_MAX_STRING_MSG_LENGTH);
+    r->name = s_strndup (reply_name, IGS_MAX_SERVICE_NAME_LENGTH);
     r->replies_names_ordered = zlist_new();
     zlist_comparefn(r->replies_names_ordered, (zlist_compare_fn*) strcmp);
     zlist_autofree(r->replies_names_ordered);
     r->replies = zhashx_new();
-    zlist_append(s->replies_names_ordered, strdup(r->name));
+    zlist_append(s->replies_names_ordered, r->name);
     zhashx_insert(s->replies, r->name, r);
     definition_update_json (agent->definition);
     agent->network_need_to_send_definition_update = true;
     model_read_write_unlock(__FUNCTION__, __LINE__);
     return IGS_SUCCESS;
+}
+
+igs_result_t igsagent_service_reply_set_description(igsagent_t *agent, const char *service_name, const char *reply_name, const char *description)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return IGS_FAILURE;
+    assert (service_name);
+    assert (reply_name);
+    assert(model_check_string(reply_name, IGS_MAX_SERVICE_NAME_LENGTH));
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    igs_service_t *r = zhashx_lookup(s->replies, reply_name);
+    if (!r) {
+        igsagent_error (agent, "service with name %s has no reply named %s", service_name, reply_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    r->description = s_strndup (description, IGS_MAX_DESCRIPTION_LENGTH);
+    definition_update_json (agent->definition);
+    agent->network_need_to_send_definition_update = true;
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return IGS_SUCCESS;
+}
+
+char * igsagent_service_reply_description(igsagent_t *agent, const char *service_name, const char *reply_name)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return NULL;
+    assert (service_name);
+    assert (reply_name);
+    assert(model_check_string(reply_name, IGS_MAX_SERVICE_NAME_LENGTH));
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return NULL;
+    }
+    igs_service_t *r = zhashx_lookup(s->replies, reply_name);
+    if (!r) {
+        igsagent_error (agent, "service with name %s has no reply named %s", service_name, reply_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return NULL;
+    }
+    char *description = (r && (r->description)) ? strdup (r->description) : NULL;
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
 }
 
 igs_result_t igsagent_service_reply_remove(igsagent_t *agent, const char *service_name, const char *reply_name){
@@ -710,6 +872,7 @@ igs_result_t igsagent_service_reply_arg_add(igsagent_t *agent, const char *servi
     assert (service_name);
     assert (reply_name);
     assert (arg_name);
+    assert(model_check_string(arg_name, IGS_MAX_SERVICE_ARG_NAME_LENGTH));
     assert (agent->definition);
     model_read_write_lock(__FUNCTION__, __LINE__);
     igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
@@ -720,7 +883,7 @@ igs_result_t igsagent_service_reply_arg_add(igsagent_t *agent, const char *servi
     }
     igs_service_t *r = zhashx_lookup(s->replies, reply_name);
     if (!r){
-        igsagent_error (agent, "service with name %s  has no reply named %s", service_name, reply_name);
+        igsagent_error (agent, "service with name %s has no reply named %s", service_name, reply_name);
         model_read_write_unlock(__FUNCTION__, __LINE__);
         return IGS_FAILURE;
     }
@@ -735,11 +898,7 @@ igs_result_t igsagent_service_reply_arg_add(igsagent_t *agent, const char *servi
         return IGS_FAILURE;
     }
     igs_service_arg_t *a = (igs_service_arg_t *) zmalloc (sizeof (igs_service_arg_t));
-    if (strnlen (arg_name, IGS_MAX_STRING_MSG_LENGTH) == IGS_MAX_STRING_MSG_LENGTH) {
-        a->name = s_strndup (arg_name, IGS_MAX_STRING_MSG_LENGTH);
-        igsagent_warn (agent, "service argument name has been shortened to %s", a->name);
-    } else
-        a->name = s_strndup (arg_name, IGS_MAX_STRING_MSG_LENGTH);
+    a->name = s_strndup (arg_name, IGS_MAX_SERVICE_ARG_NAME_LENGTH);
     switch (type) {
         case IGS_BOOL_T:
             a->size = sizeof (bool);
@@ -774,7 +933,84 @@ igs_result_t igsagent_service_reply_arg_add(igsagent_t *agent, const char *servi
     return IGS_SUCCESS;
 }
 
-igs_result_t igsagent_service_reply_arg_remove(igsagent_t *agent, const char *service_name, 
+igs_result_t igsagent_service_reply_arg_set_description(igsagent_t *agent, const char *service_name, const char *reply_name, const char *arg_name, const char *description)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return IGS_FAILURE;
+    assert (service_name);
+    assert (reply_name);
+    assert (arg_name);
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    igs_service_t *r = zhashx_lookup(s->replies, reply_name);
+    if (!r){
+        igsagent_error (agent, "service with name %s has no reply named %s", service_name, reply_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return IGS_FAILURE;
+    }
+    bool found = false;
+    igs_service_arg_t *arg = r->arguments;
+    while (arg) {
+        if (streq (arg_name, arg->name)) {
+            arg->description = s_strndup (description, IGS_MAX_DESCRIPTION_LENGTH);
+            found = true;
+            definition_update_json (agent->definition);
+            agent->network_need_to_send_definition_update = true;
+            break;
+        }
+        arg = arg->next;
+    }
+    if (!found)
+        igsagent_error (agent, "no argument named %s for reply %s in service %s", arg_name, reply_name, service_name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return !found ? IGS_FAILURE : IGS_SUCCESS;
+}
+
+char * igsagent_service_reply_arg_description(igsagent_t *agent, const char *service_name, const char *reply_name, const char *arg_name)
+{
+    assert (agent);
+    if (!agent->uuid)
+        return NULL;
+    assert (service_name);
+    assert (arg_name);
+    assert (agent->definition);
+    model_read_write_lock(__FUNCTION__, __LINE__);
+    igs_service_t *s = zhashx_lookup(agent->definition->services_table, service_name);
+    if (!s) {
+        igsagent_error (agent, "service with name %s does not exist", service_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return NULL;
+    }
+    igs_service_t *r = zhashx_lookup(s->replies, reply_name);
+    if (!r){
+        igsagent_error (agent, "service with name %s has no reply named %s", service_name, reply_name);
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return NULL;
+    }
+    char * description = NULL;
+    igs_service_arg_t *arg = r->arguments;
+    while (arg) {
+        if (streq (arg_name, arg->name)) {
+            if (arg->description)
+                description = s_strndup (arg->description, IGS_MAX_DESCRIPTION_LENGTH);
+            break;
+        }
+        arg = arg->next;
+    }
+    if (description == NULL)
+        igsagent_error (agent, "no argument named %s for reply %s in service %s", arg_name, reply_name, service_name);
+    model_read_write_unlock(__FUNCTION__, __LINE__);
+    return description;
+}
+
+igs_result_t igsagent_service_reply_arg_remove(igsagent_t *agent, const char *service_name,
                                                const char *reply_name, const char *arg_name){
     assert (agent);
     if (!agent->uuid)
@@ -806,6 +1042,8 @@ igs_result_t igsagent_service_reply_arg_remove(igsagent_t *agent, const char *se
             else
                 r->arguments = arg->next;
             free (arg->name);
+            if (arg->description)
+                free (arg->description);
             if (arg->type == IGS_DATA_T && arg->data)
                 free (arg->data);
             else
@@ -849,8 +1087,26 @@ igs_result_t igsagent_service_call (igsagent_t *agent,
     if (agent->rt_timestamps_enabled){
         if (agent->context && agent->context->rt_current_microseconds != INT64_MIN)
             current_microseconds = agent->context->rt_current_microseconds;
-        else
-            current_microseconds = zclock_usecs();
+        else{
+            #if defined(__UNIX__)
+            struct timespec ts;
+            assert(clock_gettime(CLOCK_REALTIME, &ts) == 0);
+            current_microseconds = ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+            #elif defined(__WINDOWS__)
+            FILETIME ft;
+            LARGE_INTEGER li;
+            GetSystemTimePreciseAsFileTime(&ft);
+            li.LowPart = ft.dwLowDateTime;
+            li.HighPart = ft.dwHighDateTime;
+            //NOTE: Windows timestamp is based on Jan 1st 1601 with a 100ns precision.
+            //      To convert it into a UNIX timestamp (based on Jan 1st 1970),
+            //      we must substract the number of microseconds between these two dates.
+            //      Calculation details :
+            //          - li.QuadPart / 10LL turns 100ns prevision value into microseconds
+            //          - then we substract 11644473600000000LL to get a microseconds UNIX timestamp
+            current_microseconds = (li.QuadPart / 10LL) - 11644473600000000LL;
+            #endif
+        }
     }
     
     // 1- iteration on remote agents
@@ -895,9 +1151,8 @@ igs_result_t igsagent_service_call (igsagent_t *agent,
                                 frame = zframe_new (&arg->d, sizeof (double));
                                 break;
                             case IGS_STRING_T: {
-                                if (arg->c)
-                                    frame =
-                                    zframe_new (arg->c, strlen (arg->c) + 1);
+                                if (arg->c && arg->size)
+                                    frame = zframe_new (arg->c, strlen (arg->c) + 1);
                                 else
                                     frame = zframe_new (NULL, 0);
                                 break;
@@ -968,7 +1223,6 @@ igs_result_t igsagent_service_call (igsagent_t *agent,
                         continue;
                     }else {
                         agent->rt_current_timestamp_microseconds = current_microseconds;
-                        agent->rt_current_timestamp_microseconds = INT64_MIN;
                         if (core_context->enable_service_logging)
                             service_log_received_service (local_agent, agent->definition->name, agent->uuid, service_name,
                                                           (list)?*list:NULL, current_microseconds);
@@ -980,14 +1234,15 @@ igs_result_t igsagent_service_call (igsagent_t *agent,
                         
                         if (core_context->enable_service_logging)
                             s_service_log_sent_service (agent, local_agent->definition->name, local_agent->uuid,
-                                                        service_name, *list, current_microseconds);
+                                                        service_name, (list)?*list:NULL, current_microseconds);
                         else
                             igsagent_debug (agent, "calling %s.%s(%s) locally", local_agent->definition->name, service_name, local_agent->uuid);
                         model_read_write_unlock(__FUNCTION__, __LINE__);
                         if (local_agent->uuid && agent->uuid && service->service_cb)
                             (service->service_cb) (local_agent, agent->definition->name, agent->uuid, service_name,
-                                                   *list, nb_arguments, token, service->cb_data);
+                                                   (list)?*list:NULL, nb_arguments, token, service->cb_data);
                         model_read_write_lock(__FUNCTION__, __LINE__);
+                        agent->rt_current_timestamp_microseconds = INT64_MIN;
                     }
                 }else
                     igsagent_error (agent, "could not find service named %s for %s (%s) : service will not be called",

@@ -126,7 +126,6 @@ void s_handle_publication (zmsg_t **msg, igs_remote_agent_t *remote_agent)
     int64_t timestamp = INT64_MIN;
     zframe_t *frame = NULL;
     size_t size = 0;
-    char *value = NULL;
     void *data = NULL;
     zmsg_t *bundle = NULL;
     size_t i = 0;
@@ -134,7 +133,6 @@ void s_handle_publication (zmsg_t **msg, igs_remote_agent_t *remote_agent)
     //NB: The following iterations need to be protected in case the remote agent disappears
     //while we are handling data.
     for (i = 0; i < msg_size; i += 3) {
-        value = NULL;
         data = NULL;
         frame = NULL;
         // Each message part must contain 3 elements
@@ -161,52 +159,13 @@ void s_handle_publication (zmsg_t **msg, igs_remote_agent_t *remote_agent)
         }
         free (v_type);
 
-
         // get data before iterating to all the mapping elements using it
-        if (value_type == IGS_STRING_T) {
-            value = zmsg_popstr (*msg);
-            if (!value) {
-                igs_error ("value from %s.%s is NULL in received publication : rejecting",
-                           remote_agent->definition->name, output);
-                break;
-            }
-        } else if (value_type == IGS_TIMESTAMPED_STRING_T) {
-            bundle = zmsg_popmsg(*msg);
-            if (!bundle) {
-                igs_error ("value from %s.%s is NULL in received publication : rejecting",
-                           remote_agent->definition->name, output);
-                break;
-            }
-            size_t bundle_size = zmsg_size(bundle);
-            if (bundle_size != 2) {
-                igs_error ("value from %s.%s is corrupted in received publication : rejecting",
-                           remote_agent->definition->name, output);
-                zmsg_destroy(&bundle);
-                break;
-            }
-            value = zmsg_popstr (bundle);
-            if (!value) {
-                igs_error ("value from %s.%s is NULL in received publication : rejecting",
-                           remote_agent->definition->name, output);
-                zmsg_destroy(&bundle);
-                break;
-            }
-            timestamp_f = zmsg_pop(bundle);
-            if (!timestamp_f) {
-                igs_error ("timestamp from %s.%s is NULL in received publication : rejecting",
-                           remote_agent->definition->name, output);
-                zmsg_destroy(&bundle);
-                break;
-            }
-            memcpy(&timestamp, zframe_data(timestamp_f), sizeof(int64_t));
-            zframe_destroy(&timestamp_f);
-            zmsg_destroy(&bundle);
-
-        } else if (value_type == IGS_TIMESTAMPED_INTEGER_T
-                   || value_type == IGS_TIMESTAMPED_DOUBLE_T
-                   || value_type == IGS_TIMESTAMPED_BOOL_T
-                   || value_type == IGS_TIMESTAMPED_IMPULSION_T
-                   || value_type == IGS_TIMESTAMPED_DATA_T){
+        if (value_type == IGS_TIMESTAMPED_INTEGER_T
+            || value_type == IGS_TIMESTAMPED_DOUBLE_T
+            || value_type == IGS_TIMESTAMPED_BOOL_T
+            || value_type == IGS_TIMESTAMPED_STRING_T
+            || value_type == IGS_TIMESTAMPED_IMPULSION_T
+            || value_type == IGS_TIMESTAMPED_DATA_T){
             bundle = zmsg_popmsg(*msg);
             if (!bundle) {
                 igs_error ("value from %s is NULL in received publication : rejecting", output);
@@ -278,10 +237,7 @@ void s_handle_publication (zmsg_t **msg, igs_remote_agent_t *remote_agent)
                         // we have a fully matching mapping element: use the input
                         agent->rt_current_timestamp_microseconds = timestamp;
                         igs_io_t *io = NULL;
-                        if (value_type == IGS_STRING_T)
-                            io = model_write (agent, found_input->name, IGS_INPUT_T, value_type, value, strlen(value) + 1);
-                        else
-                            io = model_write (agent, found_input->name, IGS_INPUT_T, value_type, data, size);
+                        io = model_write (agent, found_input->name, IGS_INPUT_T, value_type, data, size);
                         if (io && io->name){
                             model_read_write_unlock(__FUNCTION__, __LINE__);
                             model_LOCKED_handle_io_callbacks(agent, io);
@@ -296,8 +252,6 @@ void s_handle_publication (zmsg_t **msg, igs_remote_agent_t *remote_agent)
             agent = zhashx_next(core_context->agents);
         }
         freen (output);
-        if (value)
-            freen(value);
         if (frame){
             zframe_destroy(&frame);
             data = NULL;
@@ -456,11 +410,10 @@ int s_network_configure_mapping_to_remote_agent (igsagent_t *agent,
 
                 // check type compatibility between input and output value types
                 // including implicit conversions
-                if (found_output && found_input
-                    && mapping_check_input_output_compatibility (agent, found_input, found_output)) {
+                if (found_output && found_input) {
                     // we have validated input, agent and output names : we can map
-                    // NOTE: the call below may happen several times if our agent uses
-                    // the remote agent ouput on several of its inputs. This should not
+                    // NB: the call below may happen several times if our agent uses
+                    // the remote agent output on several of its inputs. This should not
                     // have any consequence.
                     s_subscribe_to_remote_agent_output (remote_agent, el->to_output);
 
@@ -1504,7 +1457,10 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                         zmsg_addstr (msg_to_send, current->name);
                         zmsg_addstrf (msg_to_send, "%d",
                                         current->value_type);
-                        zmsg_addstr (msg_to_send, current->value.s);
+                        if (current->value.s)
+                            zmsg_addstr (msg_to_send, current->value.s);
+                        else
+                            zmsg_addstr (msg_to_send, "");
                         break;
                     case IGS_BOOL_T:
                         zmsg_addstr (msg_to_send, current->name);
@@ -1590,7 +1546,10 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                         zmsg_addstr (msg_to_send, current->name);
                         zmsg_addstrf (msg_to_send, "%d",
                                         current->value_type);
-                        zmsg_addstr (msg_to_send, current->value.s);
+                        if (current->value.s)
+                            zmsg_addstr (msg_to_send, current->value.s);
+                        else
+                            zmsg_addstr (msg_to_send, "");
                         break;
                     case IGS_BOOL_T:
                         zmsg_addstr (msg_to_send, current->name);
@@ -1893,7 +1852,7 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
         }
         else if (streq (title, SET_INPUT_MSG) || streq (title, SET_OUTPUT_MSG) || streq (title, SET_ATTRIBUTE_MSG)) {
             char *io_name = zmsg_popstr (msg_duplicate);
-            if (io_name == NULL) {
+            if (!io_name) {
                 igs_error ("no valid io name in %s message received from %s(%s): rejecting",
                            title, name, peerUUID);
                 zmsg_destroy (&msg_duplicate);
@@ -1901,9 +1860,10 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                 free(title);
                 return 0;
             }
-            char *value = zmsg_popstr (msg_duplicate);
-            if (value == NULL) {
-                igs_error ("no valid value in %s message received from %s(%s): rejecting",
+            char *value = NULL;
+            zframe_t *value_frame = zmsg_pop(msg_duplicate);
+            if (!value_frame){
+                igs_error ("no valid value frame in %s message received from %s(%s): rejecting",
                            title, name, peerUUID);
                 free (io_name);
                 zmsg_destroy (&msg_duplicate);
@@ -1911,8 +1871,11 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                 free(title);
                 return 0;
             }
+            if (zframe_size(value_frame) > 0)
+                value = zframe_strdup(value_frame);
+            zframe_destroy(&value_frame);
             char *uuid = zmsg_popstr (msg_duplicate);
-            if (uuid == NULL) {
+            if (!uuid) {
                 igs_error ("no valid uuid in %s message received from %s(%s): rejecting",
                            title, name, peerUUID);
                 free (io_name);
@@ -1929,7 +1892,8 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                 if (uuid)
                     free (uuid);
                 free (io_name);
-                free (value);
+                if (value)
+                    free (value);
                 zmsg_destroy (&msg_duplicate);
                 zyre_event_destroy (&zyre_event);
                 model_read_write_unlock(__FUNCTION__, __LINE__);
@@ -1962,20 +1926,18 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
             if (shall_inject){
                 if (streq (title, SET_INPUT_MSG)){
                     igs_debug ("received SET_INPUT command from %s (%s)", name, peerUUID);
-                    if (io_name && value)
-                        igsagent_input_set_string (agent, io_name, value);
+                    igsagent_input_set_string (agent, io_name, value);
                 } else if (streq (title, SET_OUTPUT_MSG)){
                     igs_debug ("received SET_OUTPUT command from %s (%s)", name, peerUUID);
-                    if (io_name && value)
-                        igsagent_output_set_string (agent, io_name, value);
+                    igsagent_output_set_string (agent, io_name, value);
                 } else if (streq (title, SET_ATTRIBUTE_MSG)){
                     igs_debug ("received SET_ATTRIBUTE command from %s (%s)", name, peerUUID);
-                    if (io_name && value)
-                        igsagent_attribute_set_string (agent, io_name, value);
+                    igsagent_attribute_set_string (agent, io_name, value);
                 }
             }
             free (io_name);
-            free (value);
+            if (value)
+                free (value);
             free (uuid);
         }
         else if (streq (title, MAP_MSG)) {
@@ -2511,47 +2473,48 @@ int s_manage_zyre_incoming (zloop_t *loop, zsock_t *socket, void *arg)
                     size_t nb_frames = zmsg_size (msg);
                     igs_service_arg_t *args = NULL;
                     if (nb_frames >= nb_args){
-                        service_make_values_to_arguments_from_message (&args, service, msg_duplicate);
-                        callee_agent->rt_current_timestamp_microseconds = INT64_MIN;
-                        bool rest_of_the_message_is_ok = true;
-                        if (zmsg_size(msg_duplicate) >= 1){ //we still have the timestamp to handle
-                            /*
-                             We test >= 1 to be retro-compatible with future possible extensions of the protocol.
-                             In the situation when a caller calls with erroneous additional arguments, we won't
-                             be able to detect these additionnal arguments if the first erroneous additional
-                             argument has a 64 bits size. In this particular case, the first erroneous additional
-                             argument will be interpreted as a timestamp for the service call. In any other cases,
-                             we will log an error.
-                             This limitation is introduced because, on the caller side, we may not know the details
-                             of a service, especially if ingescape proxies are involved, and we may allow additional
-                             arguments without the possibility to block the call at its source.
-                             NB: if arguments are missing, the call to service_make_values_to_arguments_from_message
-                             here above will also reject the call.
-                             */
-                            zframe_t *timestamp_f = zmsg_pop(msg_duplicate);
-                            assert(timestamp_f);
-                            if (zframe_size(timestamp_f) == sizeof(int64_t))
-                                memcpy(&callee_agent->rt_current_timestamp_microseconds, zframe_data(timestamp_f), sizeof(int64_t));
-                            else {
-                                igsagent_error (callee_agent, "received data is corrupted and will be ignored for service %s called from %s(%s)",
-                                                service_name, caller_name, caller_uuid);
-                                rest_of_the_message_is_ok = false;
-                            }
-                            zframe_destroy(&timestamp_f);
-                        }
-                        if (rest_of_the_message_is_ok) {
-                            if (core_context->enable_service_logging)
-                                service_log_received_service (callee_agent, caller_name, caller_uuid, service_name,
-                                                              args, callee_agent->rt_current_timestamp_microseconds);
-                            model_read_write_unlock(__FUNCTION__, __LINE__);
-                            if (callee_agent->uuid && service->service_cb)
-                                (service->service_cb) (callee_agent, caller_name, caller_uuid, service_name,
-                                                       args, nb_args, token, service->cb_data);
-                            model_read_write_lock(__FUNCTION__, __LINE__);
-                        }
-                        igs_service_args_destroy(&args);
-                        if (callee_agent->uuid)
+                        if (service_make_values_to_arguments_from_message (&args, service, msg_duplicate) == IGS_SUCCESS){
                             callee_agent->rt_current_timestamp_microseconds = INT64_MIN;
+                            bool rest_of_the_message_is_ok = true;
+                            if (zmsg_size(msg_duplicate) >= 1){ //we still have the timestamp to handle
+                                /*
+                                 We test >= 1 to be retro-compatible with future possible extensions of the protocol.
+                                 In the situation when a caller calls with erroneous additional arguments, we won't
+                                 be able to detect these additionnal arguments if the first erroneous additional
+                                 argument has a 64 bits size. In this particular case, the first erroneous additional
+                                 argument will be interpreted as a timestamp for the service call. In any other cases,
+                                 we will log an error.
+                                 This limitation is introduced because, on the caller side, we may not know the details
+                                 of a service, especially if ingescape proxies are involved, and we may allow additional
+                                 arguments without the possibility to block the call at its source.
+                                 NB: if arguments are missing, the call to service_make_values_to_arguments_from_message
+                                 here above will also reject the call.
+                                 */
+                                zframe_t *timestamp_f = zmsg_pop(msg_duplicate);
+                                assert(timestamp_f);
+                                if (zframe_size(timestamp_f) == sizeof(int64_t))
+                                    memcpy(&callee_agent->rt_current_timestamp_microseconds, zframe_data(timestamp_f), sizeof(int64_t));
+                                else {
+                                    igsagent_error (callee_agent, "received data is corrupted and will be ignored for service %s called from %s(%s)",
+                                                    service_name, caller_name, caller_uuid);
+                                    rest_of_the_message_is_ok = false;
+                                }
+                                zframe_destroy(&timestamp_f);
+                            }
+                            if (rest_of_the_message_is_ok) {
+                                if (core_context->enable_service_logging)
+                                    service_log_received_service (callee_agent, caller_name, caller_uuid, service_name,
+                                                                  args, callee_agent->rt_current_timestamp_microseconds);
+                                model_read_write_unlock(__FUNCTION__, __LINE__);
+                                if (callee_agent->uuid && service->service_cb)
+                                    (service->service_cb) (callee_agent, caller_name, caller_uuid, service_name,
+                                                           args, nb_args, token, service->cb_data);
+                                model_read_write_lock(__FUNCTION__, __LINE__);
+                            }
+                            igs_service_args_destroy(&args);
+                            if (callee_agent->uuid)
+                                callee_agent->rt_current_timestamp_microseconds = INT64_MIN;
+                        }
                     } else
                         igs_error ("arguments count do not match in received message for service %s (%zu vs. %zu expected)",
                                    name, nb_frames, nb_args);
@@ -3240,6 +3203,11 @@ void s_init_loop (igs_core_context_t *context)
             return;
         }
     }
+    
+    int result = chmod(context->network_ipc_folder_path, 0777);
+    if (result != EXIT_SUCCESS)
+        igs_error("failed chmod 0777 for IPC folder at '%s'", context->network_ipc_folder_path);
+
     s_lock_zyre_peer (__FUNCTION__, __LINE__);
     context->network_ipc_full_path = (char *) zmalloc (strlen (context->network_ipc_folder_path) + strlen (zyre_uuid (context->node)) + 2);
     sprintf (context->network_ipc_full_path, "%s/%s",
@@ -3431,8 +3399,26 @@ igs_result_t network_publish_output (igsagent_t *agent, const igs_io_t *io)
         if (agent->rt_timestamps_enabled){
             if (agent->context->rt_current_microseconds != INT64_MIN)
                 current_microseconds = agent->context->rt_current_microseconds;
-            else
-                current_microseconds = zclock_usecs();
+            else{
+                #if defined(__UNIX__)
+                struct timespec ts;
+                assert(clock_gettime(CLOCK_REALTIME, &ts) == 0);
+                current_microseconds = ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+                #elif defined(__WINDOWS__)
+                FILETIME ft;
+                LARGE_INTEGER li;
+                GetSystemTimePreciseAsFileTime(&ft);
+                li.LowPart = ft.dwLowDateTime;
+                li.HighPart = ft.dwHighDateTime;
+                //NOTE: Windows timestamp is based on Jan 1st 1601 with a 100ns precision.
+                //      To convert it into a UNIX timestamp (based on Jan 1st 1970),
+                //      we must substract the number of microseconds between these two dates.
+                //      Calculation details :
+                //          - li.QuadPart / 10LL turns 100ns prevision value into microseconds
+                //          - then we substract 11644473600000000LL to get a microseconds UNIX timestamp
+                current_microseconds = (li.QuadPart / 10LL) - 11644473600000000LL;
+                #endif
+            }
         }
         zmsg_t *msg = zmsg_new ();
         zmsg_addstrf (msg, "%s-%s", agent->uuid, io->name);
@@ -3494,17 +3480,23 @@ igs_result_t network_publish_output (igsagent_t *agent, const igs_io_t *io)
                 if (current_microseconds != INT64_MIN){
                     zmsg_addstrf (msg, "%d", IGS_TIMESTAMPED_STRING_T);
                     zmsg_t *packaged_value = zmsg_new();
-                    zmsg_addstr (packaged_value, io->value.s);
+                    if (io->value.s)
+                        zmsg_addmem (packaged_value, io->value.s, io->value_size);
+                    else
+                        zmsg_addmem (packaged_value, NULL, 0);
                     zmsg_addmem(packaged_value, &current_microseconds, sizeof(int64_t));
                     zmsg_addmsg(msg, &packaged_value);
-                    igsagent_debug (agent, "%s(%s) publishes %s string with timestamp %lld",
+                    igsagent_debug (agent, "%s(%s) publishes %s string (%zu bytes) with timestamp %lld",
                                     agent->definition->name, agent->uuid,
-                                    io->name, current_microseconds);
+                                    io->name, io->value_size, current_microseconds);
                 } else {
-                    zmsg_addstr (msg, io->value.s);
-                    igsagent_debug (agent, "%s(%s) publishes %s string",
+                    if (io->value.s)
+                        zmsg_addmem (msg, io->value.s, io->value_size);
+                    else
+                        zmsg_addmem (msg, NULL, 0);
+                    igsagent_debug (agent, "%s(%s) publishes %s string (%zu bytes)",
                                     agent->definition->name, agent->uuid,
-                                    io->name);
+                                    io->name, io->value_size);
                 }
                 break;
             case IGS_IMPULSION_T:
@@ -3642,7 +3634,7 @@ igs_result_t igs_start_with_device (const char *network_device,
     }
 
     model_read_write_lock(__FUNCTION__, __LINE__);
-    core_context->network_device = s_strndup (network_device, IGS_NETWORK_DEVICE_LENGTH);
+    core_context->network_device = s_strndup (network_device, IGS_MAX_NETWORK_DEVICE_LENGTH);
 
 #if defined(__WINDOWS__)
     WORD version_requested = MAKEWORD (2, 2);
@@ -3658,7 +3650,7 @@ igs_result_t igs_start_with_device (const char *network_device,
     while (name) {
         //printf (" - name=%s address=%s netmask=%s broadcast=%s\n", name, ziflist_address (iflist), ziflist_netmask (iflist), ziflist_broadcast (iflist));
         if (streq (name, network_device)) {
-            core_context->ip_address = s_strndup (ziflist_address (iflist), IGS_IP_ADDRESS_LENGTH);
+            core_context->ip_address = s_strndup (ziflist_address (iflist), IGS_MAX_IP_ADDRESS_LENGTH);
             igs_info ("Starting with ip address %s and port %d on device %s", core_context->ip_address, port, network_device);
             break;
         }
@@ -3691,7 +3683,7 @@ igs_result_t igs_start_with_ip (const char *ip_address, unsigned int port)
     }
 
     model_read_write_lock(__FUNCTION__, __LINE__);
-    core_context->ip_address = s_strndup (ip_address, IGS_IP_ADDRESS_LENGTH);
+    core_context->ip_address = s_strndup (ip_address, IGS_MAX_IP_ADDRESS_LENGTH);
 
 #if defined(__WINDOWS__)
     WORD version_requested = MAKEWORD (2, 2);
@@ -3709,8 +3701,7 @@ igs_result_t igs_start_with_ip (const char *ip_address, unsigned int port)
         //                name, ziflist_address (iflist), ziflist_netmask (iflist),
         //                ziflist_broadcast (iflist));
         if (streq (ziflist_address (iflist), ip_address)) {
-            core_context->network_device =
-            s_strndup (name, IGS_NETWORK_DEVICE_LENGTH);
+            core_context->network_device = s_strndup (name, IGS_MAX_NETWORK_DEVICE_LENGTH);
             igs_info ("starting with ip address %s and port %d on device %s", ip_address, port, core_context->network_device);
             break;
         }
@@ -3836,7 +3827,7 @@ igs_result_t igs_start_with_brokers (const char *agent_endpoint)
     if (core_context->our_agent_endpoint)
         free (core_context->our_agent_endpoint);
     core_context->our_agent_endpoint =
-    s_strndup (agent_endpoint, IGS_IP_ADDRESS_LENGTH);
+    s_strndup (agent_endpoint, IGS_MAX_IP_ADDRESS_LENGTH);
 
     assert (core_context->brokers);
     if (zhash_size (core_context->brokers) == 0 && core_context->our_broker_endpoint == NULL) {
@@ -3854,7 +3845,6 @@ igs_result_t igs_start_with_brokers (const char *agent_endpoint)
 void igs_stop (void)
 {
     core_init_agent ();
-    model_read_write_lock(__FUNCTION__, __LINE__);
     if (core_context->network_actor) {
         // interrupting and destroying ingescape thread and zyre layer
         // this will also clean all agent->subscribers
@@ -3873,6 +3863,7 @@ void igs_stop (void)
     else
         igs_debug ("ingescape already stopped");
 
+    model_read_write_lock(__FUNCTION__, __LINE__);
     if (core_context->network_device) {
         free (core_context->network_device);
         core_context->network_device = NULL;
@@ -3907,6 +3898,7 @@ void igsagent_set_name (igsagent_t *agent, const char *name)
     if (!agent->uuid)
         return;
     assert (name && strlen (name) > 0);
+    assert(model_check_string(name, IGS_MAX_AGENT_NAME_LENGTH));
     model_read_write_lock(__FUNCTION__, __LINE__);
     if (streq (agent->definition->name, name)){
         if (!agent->igs_channel){
@@ -3920,27 +3912,13 @@ void igsagent_set_name (igsagent_t *agent, const char *name)
         return;
     }
 
-    char *n = s_strndup (name, IGS_MAX_AGENT_NAME_LENGTH);
-    if (strlen (name) > IGS_MAX_AGENT_NAME_LENGTH)
-        printf("Agent name '%s' exceeds maximum size and will be truncated to '%s'\n", name, n);
-    bool invalid_name = false;
-    size_t length_ofn = strlen (n);
-    size_t i = 0;
-    for (i = 0; i < length_ofn; i++) {
-        if (n[i] == ' ' || n[i] == '.') {
-            n[i] = '_';
-            invalid_name = true;
-        }
-    }
-    if (invalid_name)
-        printf("Spaces and dots are not allowed in an agent name: '%s' has been changed to '%s'\n", name, n);
     char *previous = agent->definition->name;
-    agent->definition->name = n;
+    agent->definition->name = s_strndup (name, IGS_MAX_AGENT_NAME_LENGTH);
     if (!agent->definition->my_class)
-        agent->definition->my_class = strdup(n);
-    else if (previous && streq(agent->definition->my_class, previous)){
+        agent->definition->my_class = strdup(agent->definition->name);
+    else if (previous && streq(agent->definition->my_class, previous) && !agent->definition->class_set_explicitly){
         free (agent->definition->my_class);
-        agent->definition->my_class = strdup(n);
+        agent->definition->my_class = strdup(agent->definition->name);
     }
     definition_update_json (agent->definition);
     agent->network_need_to_send_definition_update = true;
@@ -4085,10 +4063,10 @@ void igsagent_set_state (igsagent_t *agent, const char *state)
         return;
     assert (state);
     model_read_write_lock(__FUNCTION__, __LINE__);
-    if (agent->state == NULL || !streq (state, agent->state)) {
+    if (!agent->state || !streq (state, agent->state)) {
         if (agent->state)
             free (agent->state);
-        agent->state = s_strndup (state, IGS_MAX_AGENT_NAME_LENGTH);
+        agent->state = s_strndup (state, IGS_MAX_STATE_LENGTH);
         if (agent->context && agent->context->node) {
             s_lock_zyre_peer (__FUNCTION__, __LINE__);
             zmsg_t *msg = zmsg_new ();
@@ -4210,7 +4188,7 @@ char *igs_command_line (void)
     model_read_write_lock(__FUNCTION__, __LINE__);
     char *res = NULL;
     if (core_context->command_line)
-        res = s_strndup (core_context->command_line, IGS_COMMAND_LINE_LENGTH);
+        res = s_strndup (core_context->command_line, IGS_MAX_COMMAND_LINE_LENGTH);
     model_read_write_unlock(__FUNCTION__, __LINE__);
     return res;
 }
@@ -4222,7 +4200,7 @@ void igs_set_command_line (const char *line)
     model_read_write_lock(__FUNCTION__, __LINE__);
     if (core_context->command_line)
         free (core_context->command_line);
-    core_context->command_line = s_strndup (line, IGS_COMMAND_LINE_LENGTH);
+    core_context->command_line = s_strndup (line, IGS_MAX_COMMAND_LINE_LENGTH);
     igs_debug ("Command line set to %s", core_context->command_line);
     model_read_write_unlock(__FUNCTION__, __LINE__);
 }
@@ -4235,7 +4213,7 @@ void igs_set_command_line_from_args (int argc, const char **argv)
         return;
     }
     model_read_write_lock(__FUNCTION__, __LINE__);
-    char cmd[IGS_COMMAND_LINE_LENGTH] = "";
+    char cmd[IGS_MAX_COMMAND_LINE_LENGTH] = "";
 
 #if defined(__UNIX__)
     size_t ret;
@@ -4248,9 +4226,9 @@ void igs_set_command_line_from_args (int argc, const char **argv)
     char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
     ret = proc_pidpath (pid, pathbuf, sizeof (pathbuf));
 #else
-    char pathbuf[IGS_COMMAND_LINE_LENGTH];
-    memset (pathbuf, 0, IGS_COMMAND_LINE_LENGTH);
-    ret = readlink ("/proc/self/exe", pathbuf, IGS_COMMAND_LINE_LENGTH);
+    char pathbuf[IGS_MAX_COMMAND_LINE_LENGTH];
+    memset (pathbuf, 0, IGS_MAX_COMMAND_LINE_LENGTH);
+    ret = readlink ("/proc/self/exe", pathbuf, IGS_MAX_COMMAND_LINE_LENGTH);
 #endif
     if (ret <= 0) {
         igs_error ("PID %d: proc_pidpath () - %s", pid, strerror (errno));
@@ -4260,7 +4238,7 @@ void igs_set_command_line_from_args (int argc, const char **argv)
     igs_debug ("proc %d: %s", pid, pathbuf);
 
 
-    if (strlen (pathbuf) > IGS_COMMAND_LINE_LENGTH) {
+    if (strlen (pathbuf) > IGS_MAX_COMMAND_LINE_LENGTH) {
         igs_error ("path is too long: %s", pathbuf);
         model_read_write_unlock(__FUNCTION__, __LINE__);
         return;
@@ -4280,9 +4258,9 @@ void igs_set_command_line_from_args (int argc, const char **argv)
 #endif
 
     if (strchr (cmd, ' ') || strchr (cmd, '\"')) {
-        if (strlen (cmd) + 1 > IGS_COMMAND_LINE_LENGTH) {
+        if (strlen (cmd) + 1 > IGS_MAX_COMMAND_LINE_LENGTH) {
             igs_error ("Path to our executable exceeds the maximum buffer size of %d. Command line won't be set.",
-                       IGS_COMMAND_LINE_LENGTH);
+                       IGS_MAX_COMMAND_LINE_LENGTH);
             model_read_write_unlock(__FUNCTION__, __LINE__);
             return;
         }
@@ -4292,9 +4270,9 @@ void igs_set_command_line_from_args (int argc, const char **argv)
         char *prev = cmd_bis;
         char *it = strchr (cmd_bis, '\"');
         while (it) {
-            if (strlen (cmd) + (it - prev + 2) > IGS_COMMAND_LINE_LENGTH) {
+            if (strlen (cmd) + (it - prev + 2) > IGS_MAX_COMMAND_LINE_LENGTH) {
                 igs_error ("Path to our executable exceeds the maximum buffer size of "
-                           "%d. Command line won't be set.", IGS_COMMAND_LINE_LENGTH);
+                           "%d. Command line won't be set.", IGS_MAX_COMMAND_LINE_LENGTH);
                 return;
             }
             strncat (cmd, prev, (it - prev + 1));
@@ -4302,9 +4280,9 @@ void igs_set_command_line_from_args (int argc, const char **argv)
             prev = it + 1;
             it = strchr (it + 1, '\"');
         }
-        if (strlen (cmd) + strlen (prev) + 2 > IGS_COMMAND_LINE_LENGTH) {
+        if (strlen (cmd) + strlen (prev) + 2 > IGS_MAX_COMMAND_LINE_LENGTH) {
             igs_error ("Path to our executable exceeds the maximum buffer size of %d. "
-                       "Command line won't be set.", IGS_COMMAND_LINE_LENGTH);
+                       "Command line won't be set.", IGS_MAX_COMMAND_LINE_LENGTH);
             return;
         }
         strcat (cmd, prev);
@@ -4315,7 +4293,7 @@ void igs_set_command_line_from_args (int argc, const char **argv)
 
     int i = 1;
     for (; i < argc; i++) {
-        char *formated_arg = (char *) zmalloc (IGS_COMMAND_LINE_LENGTH * sizeof (char));
+        char *formated_arg = (char *) zmalloc (IGS_MAX_COMMAND_LINE_LENGTH * sizeof (char));
         if (strchr (argv[i], ' ') || strchr (argv[i], '\"')) {
             strcat (formated_arg, "\"");
             const char *prev = argv[i];
@@ -4332,7 +4310,7 @@ void igs_set_command_line_from_args (int argc, const char **argv)
         else
             strcpy (formated_arg, argv[i]);
 
-        if (strlen (cmd) + strlen (formated_arg) + 2 > IGS_COMMAND_LINE_LENGTH) { // 2 is for space and EOL
+        if (strlen (cmd) + strlen (formated_arg) + 2 > IGS_MAX_COMMAND_LINE_LENGTH) { // 2 is for space and EOL
             igs_error ("passed arguments exceed buffer size: concatenation will stop here with '%s'", cmd);
             free(formated_arg);
             break;
@@ -4345,7 +4323,7 @@ void igs_set_command_line_from_args (int argc, const char **argv)
     }
     if (core_context->command_line)
         free (core_context->command_line);
-    core_context->command_line = s_strndup (cmd, IGS_COMMAND_LINE_LENGTH);
+    core_context->command_line = s_strndup (cmd, IGS_MAX_COMMAND_LINE_LENGTH);
     model_read_write_unlock(__FUNCTION__, __LINE__);
 }
 
@@ -4384,8 +4362,8 @@ char** igs_net_devices_list (int *nb)
         //        printf (" - name=%s address=%s netmask=%s broadcast=%s\n",
         //                name, ziflist_address (iflist), ziflist_netmask (iflist),
         //                ziflist_broadcast (iflist));
-        devices[current_device_nb] = (char *) zmalloc ((IGS_NETWORK_DEVICE_LENGTH + 1) * sizeof (char));
-        strncpy (devices[current_device_nb], name, IGS_NETWORK_DEVICE_LENGTH);
+        devices[current_device_nb] = (char *) zmalloc ((IGS_MAX_NETWORK_DEVICE_LENGTH + 1) * sizeof (char));
+        strncpy (devices[current_device_nb], name, IGS_MAX_NETWORK_DEVICE_LENGTH);
         current_device_nb++;
         name = ziflist_next (iflist);
     }
@@ -4467,7 +4445,7 @@ igs_result_t igs_enable_security (const char *private_certificate_file,
     if (private_certificate_file) {
         char private_key_path[IGS_MAX_PATH_LENGTH] = "";
         admin_make_file_path (private_certificate_file, private_key_path,
-                                IGS_MAX_PATH_LENGTH);
+                              IGS_MAX_PATH_LENGTH);
         zcert_t *new_certificate = zcert_load (private_key_path);
         if (new_certificate == NULL) {
             igs_error ("could not load private certificate at '%s'",
@@ -4733,6 +4711,11 @@ void igs_set_ipc_dir (const char *path)
     core_init_agent ();
     assert (path);
     model_read_write_lock(__FUNCTION__, __LINE__);
+    if (core_context->network_actor) {
+        igs_error ("IPC folder path cannot be changed while the agent is running");
+        model_read_write_unlock(__FUNCTION__, __LINE__);
+        return;
+    }
     if (core_context->network_ipc_folder_path == NULL
         || !streq (path, core_context->network_ipc_folder_path)) {
         if (*path == '/') {
@@ -4750,8 +4733,11 @@ void igs_set_ipc_dir (const char *path)
                     free (core_context->network_ipc_folder_path);
                 core_context->network_ipc_folder_path = strdup (path);
             } else if (core_context->network_ipc_folder_path)
-                igs_error ("IPC dir remains set to %s", core_context->network_ipc_folder_path);
-
+                igs_error ("IPC folder remains set to %s", core_context->network_ipc_folder_path);
+            
+            int result = chmod(core_context->network_ipc_folder_path, 0777);
+            if (result != EXIT_SUCCESS)
+                igs_error("failed chmod 0777 for IPC folder at '%s'", core_context->network_ipc_folder_path);
         }else
             igs_error ("IPC folder path must be absolute (invalid path: %s)", path);
     }
@@ -4797,7 +4783,7 @@ bool igs_has_ipc (void)
 void igs_net_set_high_water_marks (int hwm_value)
 {
     core_init_agent ();
-    assert(hwm_value > 0);
+    assert(hwm_value >= 0);
     model_read_write_lock(__FUNCTION__, __LINE__);
     if (core_context->network_actor
         && core_context->publisher) {

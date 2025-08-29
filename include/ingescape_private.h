@@ -145,6 +145,7 @@ typedef struct igs_service{
 
 typedef struct igs_definition{
     char* my_class;
+    bool class_set_explicitly;
     char* package;
     char* name;
     char* description;
@@ -521,9 +522,7 @@ INGESCAPE_EXPORT igs_split_t* mapping_create_split_element(const char * from_inp
                                                          const char *to_agent,
                                                          const char* to_output);
 INGESCAPE_EXPORT bool mapping_is_equal(const char *first_str, const char *second_str);
-INGESCAPE_EXPORT uint64_t mapping_djb2_hash (unsigned char *str);
-INGESCAPE_EXPORT bool mapping_check_input_output_compatibility(igsagent_t *agent, igs_io_t *found_input, igs_io_t *found_output);
-INGESCAPE_EXPORT void mapping_update_json (igs_mapping_t *mapping);
+INGESCAPE_EXPORT uint64_t mapping_djb2_hash (unsigned char *str);INGESCAPE_EXPORT void mapping_update_json (igs_mapping_t *mapping);
 
 // split
 /*
@@ -657,6 +656,8 @@ INGESCAPE_EXPORT int split_message_from_splitter(zmsg_t *msg, igs_core_context_t
 #define IGS_MODEL_READ_WRITE_MUTEX_DEBUG 0
 INGESCAPE_EXPORT void model_read_write_lock(const char *function, int line);
 INGESCAPE_EXPORT void model_read_write_unlock(const char *function, int line);
+INGESCAPE_EXPORT size_t model_clean_string(char *string, int64_t max); //returns number of changes
+INGESCAPE_EXPORT bool model_check_string(const char *string, int64_t max); //false if invalid, no limit if max <= 0
 INGESCAPE_EXPORT uint8_t *model_string_to_bytes (char *string);
 INGESCAPE_EXPORT igs_io_t* model_write (igsagent_t *agent, const char *io_name, igs_io_type_t type,
                                         igs_io_value_type_t val_type, void* value, size_t size);

@@ -57,6 +57,7 @@ igsagent_t *igsagent_new (const char *name, bool activate_immediately)
     agent->activate_callbacks = zlist_new();
     agent->agent_event_callbacks = zlist_new();
     agent->mute_callbacks = zlist_new();
+    agent->rt_current_timestamp_microseconds = INT64_MIN;
     zhashx_insert (core_context->created_agents, agent->uuid, agent);
     model_read_write_unlock(__FUNCTION__, __LINE__);
     
@@ -327,8 +328,8 @@ void igsagent_log (igs_log_level_t level,
     assert (format);
     va_list list;
     va_start (list, format);
-    char content[IGS_MAX_STRING_MSG_LENGTH] = "";
-    vsnprintf (content, IGS_MAX_STRING_MSG_LENGTH - 1, format, list);
+    char content[IGS_MAX_LOG_LENGTH] = "";
+    vsnprintf (content, IGS_MAX_LOG_LENGTH - 1, format, list);
     va_end (list);
     admin_log (agent, level, function, "%s", content);
 }
