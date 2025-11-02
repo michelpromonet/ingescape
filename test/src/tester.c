@@ -2290,10 +2290,28 @@ int main(int argc, const char * argv[]) {
     }
     if (broker) {
         char buffer[1024] = "";
-        snprintf(buffer, 1024, "tcp://%s:5661", broker);
-        assert(igs_broker_add(buffer) == IGS_SUCCESS);
         snprintf(buffer, 1024, "tcp://%s:5670", broker);
+        assert(igs_broker_add(buffer) == IGS_SUCCESS);
+
+        int nbD = 0;
+        int nbA = 0;
+        char **devices = igs_net_devices_list(&nbD);
+        char **addresses = igs_net_addresses_list(&nbA);
+        
+        assert(nbD == nbA);
+        const char* endpoint = NULL;
+        for (int i = 0; i < nbD; i++) {
+            if (strcmp(devices[i], networkDevice) == 0) {
+                endpoint = addresses[i];
+                break;
+            }
+        }
+        snprintf(buffer, 1024, "tcp://%s:5672", endpoint);
         assert(igs_start_with_brokers(buffer) == IGS_SUCCESS);
+
+        igs_free_net_devices_list(devices, nbD);
+        igs_free_net_addresses_list(addresses, nbD);
+
     } else {
         //start/stop stress tests
         igs_start_with_device(networkDevice, port);

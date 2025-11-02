@@ -206,10 +206,27 @@ int main(int argc, const char * argv[]) {
 
     if (broker) {
         char buffer[1024] = "";
-        snprintf(buffer, 1024, "tcp://%s:5661", broker);
+        snprintf(buffer, 1024, "tcp://%s:5670", broker);
         igs_broker_enable_with_endpoint(buffer);
-        snprintf(buffer, 1024, "tcp://%s:5671", broker);
-        igs_start_with_brokers(buffer);
+
+        int nbD = 0;
+        int nbA = 0;
+        char **devices = igs_net_devices_list(&nbD);
+        char **addresses = igs_net_addresses_list(&nbA);
+        
+        assert(nbD == nbA);
+        const char* endpoint = NULL;
+        for (int i = 0; i < nbD; i++) {
+            if (strcmp(devices[i], p_networkDevice) == 0) {
+                endpoint = addresses[i];
+                break;
+            }
+        }
+        snprintf(buffer, 1024, "tcp://%s:5671", endpoint);
+        assert(igs_start_with_brokers(buffer) == IGS_SUCCESS);
+
+        igs_free_net_devices_list(devices, nbD);
+        igs_free_net_addresses_list(addresses, nbD);
     } else {
         igs_start_with_device(p_networkDevice, port);
     }
